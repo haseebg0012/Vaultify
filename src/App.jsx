@@ -3900,6 +3900,17 @@ function ExchangeSheet({
 
   const QUICK_SUGGESTIONS = [50, 100, 500, 1000, 1500];
 
+  const handleSwapCurrencies = () => {
+    const tempCurr = fromCurr;
+    setFromCurr(toCurr);
+    setToCurr(tempCurr);
+    if (fromAmount || toAmount) {
+      const tempAmt = fromAmount;
+      setFromAmount(toAmount);
+      setToAmount(tempAmt);
+    }
+  };
+
   // Quick date helper
   const setQuickDate = (daysFromNow, target = 'buy') => {
     const d = new Date();
@@ -4038,7 +4049,7 @@ function ExchangeSheet({
         {/* TAB 1: BUY / CONVERT FOREIGN CURRENCY ------------------------ */}
         {tab === 'convert' && (
           <div>
-            {/* Conversion Direction Visual */}
+            {/* Conversion Direction Visual with Interactive Swap Button */}
             <div style={{
               background: C.ice, borderRadius: 14, padding: '12px 14px', marginBottom: 14,
               border: `1px solid ${C.line}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -4049,12 +4060,21 @@ function ExchangeSheet({
                   {CURRENCY_META[fromCurr]?.name || fromCurr}
                 </div>
               </div>
-              <div style={{
-                width: 30, height: 30, borderRadius: '50%', background: C.surface,
-                display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${C.line}`,
-              }}>
-                <ArrowRightLeft size={14} color="#2563EB" />
-              </div>
+              <button
+                type="button"
+                onClick={handleSwapCurrencies}
+                title="Swap currencies"
+                style={{
+                  width: 34, height: 34, borderRadius: '50%', background: C.surface,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  border: `1.5px solid rgba(37,99,235,0.35)`, cursor: 'pointer',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.06)', transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.1)'; e.currentTarget.style.borderColor = '#2563EB'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.borderColor = 'rgba(37,99,235,0.35)'; }}
+              >
+                <ArrowRightLeft size={16} color="#2563EB" />
+              </button>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: 'uppercase' }}>You Receive / Buy</div>
                 <div style={{ fontFamily: SERIF, fontSize: 16, fontWeight: 700, color: '#2563EB' }}>
@@ -4063,44 +4083,45 @@ function ExchangeSheet({
               </div>
             </div>
 
-            {/* Currency Selectors */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
-              <div>
-                <SectionLabel>From Currency</SectionLabel>
-                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                  {CURRENCIES.map((c) => (
-                    <Chip key={c} active={fromCurr === c} onClick={() => setFromCurr(c)} style={{ padding: '4px 8px', fontSize: 11 }}>
-                      {c}
-                    </Chip>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <SectionLabel>To Currency (Acquired)</SectionLabel>
-                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                  {CURRENCIES.map((c) => (
-                    <Chip key={c} active={toCurr === c} onClick={() => setToCurr(c)} style={{ padding: '4px 8px', fontSize: 11 }}>
-                      {c}
-                    </Chip>
-                  ))}
-                </div>
-              </div>
-            </div>
+            {/* Side-by-Side Currency & Amount Entry with Middle Vertical Divider & Swap Button */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr auto 1fr',
+              gap: 12,
+              alignItems: 'stretch',
+              marginBottom: 14,
+            }}>
+              {/* LEFT COLUMN: FROM CURRENCY */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <SectionLabel style={{ margin: 0 }}>From Currency</SectionLabel>
 
-            {/* Amount Inputs with Suggestions */}
-            <div style={{ marginBottom: 12 }}>
-              {/* Paid Amount */}
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                  <SectionLabel style={{ margin: 0 }}>Amount Paid ({fromCurr}) *</SectionLabel>
-                  <div style={{ display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 2 }}>
+                {/* Currency Selection Chips */}
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {CURRENCIES.map((c) => (
+                    <Chip
+                      key={c}
+                      active={fromCurr === c}
+                      onClick={() => setFromCurr(c)}
+                      style={{ padding: '4px 7px', fontSize: 10.5 }}
+                    >
+                      {c}
+                    </Chip>
+                  ))}
+                </div>
+
+                {/* Quick Amount Suggestion Chips */}
+                <div>
+                  <div style={{ fontSize: 9.5, color: C.muted, fontWeight: 700, textTransform: 'uppercase', marginBottom: 4 }}>
+                    Quick Amounts
+                  </div>
+                  <div style={{ display: 'flex', gap: 3.5, overflowX: 'auto', paddingBottom: 2 }}>
                     {QUICK_SUGGESTIONS.map((amt) => (
                       <button
                         key={amt}
                         type="button"
                         onClick={() => setFromAmount(String(amt))}
                         style={{
-                          padding: '2px 7px', borderRadius: 6, fontSize: 10.5, fontWeight: 700,
+                          padding: '2px 5px', borderRadius: 6, fontSize: 9.5, fontWeight: 700,
                           background: Number(fromAmount) === amt ? `${C.navy}18` : C.ice,
                           border: `1px solid ${Number(fromAmount) === amt ? C.navy : C.line}`,
                           color: Number(fromAmount) === amt ? C.navy : C.muted,
@@ -4112,36 +4133,88 @@ function ExchangeSheet({
                     ))}
                   </div>
                 </div>
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 6, background: C.ice, borderRadius: 12,
-                  padding: '10px 12px', border: `1.5px solid ${buyTouched && !numFromAmount ? '#B23A34' : C.line}`,
-                }}>
-                  <span style={{ fontSize: 15, fontWeight: 700, color: C.muted }}>
-                    {CURRENCY_META[fromCurr]?.symbol || fromCurr}
-                  </span>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    placeholder="e.g. 100000"
-                    value={fromAmount}
-                    onChange={(e) => setFromAmount(e.target.value)}
-                    style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontFamily: MONO, fontSize: 16, fontWeight: 700, color: C.heading }}
-                  />
+
+                {/* Amount Input Box */}
+                <div>
+                  <div style={{ fontSize: 9.5, color: C.muted, fontWeight: 700, textTransform: 'uppercase', marginBottom: 4 }}>
+                    Amount Paid ({fromCurr}) *
+                  </div>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 6, background: C.ice, borderRadius: 12,
+                    padding: '10px 12px', border: `1.5px solid ${buyTouched && !numFromAmount ? '#B23A34' : C.line}`,
+                  }}>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: C.muted }}>
+                      {CURRENCY_META[fromCurr]?.symbol || fromCurr}
+                    </span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      placeholder="0.00"
+                      value={fromAmount}
+                      onChange={(e) => setFromAmount(e.target.value)}
+                      style={{ width: '100%', border: 'none', background: 'transparent', outline: 'none', fontFamily: MONO, fontSize: 15, fontWeight: 700, color: C.heading }}
+                    />
+                  </div>
                 </div>
               </div>
 
-              {/* Units Received */}
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                  <SectionLabel style={{ margin: 0 }}>Units Received ({toCurr}) *</SectionLabel>
-                  <div style={{ display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 2 }}>
+              {/* CENTER VERTICAL DIVIDER & SWAP BUTTON */}
+              <div style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                position: 'relative', width: 14,
+              }}>
+                <div style={{
+                  position: 'absolute', top: 0, bottom: 0, width: 1.5, background: C.line,
+                }} />
+                <button
+                  type="button"
+                  onClick={handleSwapCurrencies}
+                  title="Swap From & To currencies"
+                  style={{
+                    position: 'relative', zIndex: 2, width: 28, height: 28, borderRadius: '50%',
+                    background: C.surface, border: `1.5px solid rgba(37,99,235,0.35)`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer', boxShadow: '0 2px 6px rgba(0,0,0,0.08)',
+                    transition: 'all 0.15s ease',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.15)'; e.currentTarget.style.borderColor = '#2563EB'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.borderColor = 'rgba(37,99,235,0.35)'; }}
+                >
+                  <ArrowRightLeft size={13} color="#2563EB" />
+                </button>
+              </div>
+
+              {/* RIGHT COLUMN: TO CURRENCY */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <SectionLabel style={{ margin: 0 }}>To Currency</SectionLabel>
+
+                {/* Currency Selection Chips */}
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {CURRENCIES.map((c) => (
+                    <Chip
+                      key={c}
+                      active={toCurr === c}
+                      onClick={() => setToCurr(c)}
+                      style={{ padding: '4px 7px', fontSize: 10.5 }}
+                    >
+                      {c}
+                    </Chip>
+                  ))}
+                </div>
+
+                {/* Quick Unit Suggestion Chips */}
+                <div>
+                  <div style={{ fontSize: 9.5, color: C.muted, fontWeight: 700, textTransform: 'uppercase', marginBottom: 4 }}>
+                    Quick Suggestions
+                  </div>
+                  <div style={{ display: 'flex', gap: 3.5, overflowX: 'auto', paddingBottom: 2 }}>
                     {QUICK_SUGGESTIONS.map((amt) => (
                       <button
                         key={amt}
                         type="button"
                         onClick={() => setToAmount(String(amt))}
                         style={{
-                          padding: '2px 7px', borderRadius: 6, fontSize: 10.5, fontWeight: 700,
+                          padding: '2px 5px', borderRadius: 6, fontSize: 9.5, fontWeight: 700,
                           background: Number(toAmount) === amt ? 'rgba(37,99,235,0.18)' : C.ice,
                           border: `1px solid ${Number(toAmount) === amt ? '#2563EB' : C.line}`,
                           color: Number(toAmount) === amt ? '#2563EB' : C.muted,
@@ -4153,21 +4226,28 @@ function ExchangeSheet({
                     ))}
                   </div>
                 </div>
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 6, background: C.ice, borderRadius: 12,
-                  padding: '10px 12px', border: `1.5px solid ${buyTouched && !numToAmount ? '#B23A34' : C.line}`,
-                }}>
-                  <span style={{ fontSize: 15, fontWeight: 700, color: '#2563EB' }}>
-                    {CURRENCY_META[toCurr]?.symbol || toCurr}
-                  </span>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    placeholder="e.g. 300"
-                    value={toAmount}
-                    onChange={(e) => setToAmount(e.target.value)}
-                    style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontFamily: MONO, fontSize: 16, fontWeight: 700, color: C.heading }}
-                  />
+
+                {/* Units Received Input Box */}
+                <div>
+                  <div style={{ fontSize: 9.5, color: C.muted, fontWeight: 700, textTransform: 'uppercase', marginBottom: 4 }}>
+                    Units Received ({toCurr}) *
+                  </div>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 6, background: C.ice, borderRadius: 12,
+                    padding: '10px 12px', border: `1.5px solid ${buyTouched && !numToAmount ? '#B23A34' : C.line}`,
+                  }}>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: '#2563EB' }}>
+                      {CURRENCY_META[toCurr]?.symbol || toCurr}
+                    </span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      placeholder="0.00"
+                      value={toAmount}
+                      onChange={(e) => setToAmount(e.target.value)}
+                      style={{ width: '100%', border: 'none', background: 'transparent', outline: 'none', fontFamily: MONO, fontSize: 15, fontWeight: 700, color: C.heading }}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
