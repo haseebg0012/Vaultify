@@ -1384,6 +1384,8 @@ function Dashboard({
   onEditReminder,
   onToggleReminder,
   onPayAndLogReminder,
+  exchanges = [],
+  onOpenExchange,
 }) {
   const C = useColors();
   const totals = computeTotals(entries, activeCurrency);
@@ -1447,6 +1449,131 @@ function Dashboard({
           ))}
         </div>
       </div>
+
+      {/* Currency Conversions & FX Tracker Widget */}
+      {(() => {
+        const openLots = (exchanges || []).filter((e) => e.type === 'buy' && (e.remainingUnits > 0 || (e.remainingUnits === undefined && e.status !== 'closed')));
+        const totalOpenCost = openLots.reduce((s, l) => {
+          const units = l.remainingUnits != null ? l.remainingUnits : l.toAmount;
+          const rate = l.rateAtDeal || (l.fromAmount / l.toAmount) || 1;
+          return s + (units * rate);
+        }, 0);
+        const totalOpenMarketVal = openLots.reduce((s, l) => {
+          const units = l.remainingUnits != null ? l.remainingUnits : l.toAmount;
+          const live = settings?.rates?.[l.toCurrency] || 1;
+          return s + (units * live);
+        }, 0);
+        const totalUnrealizedPnl = totalOpenMarketVal - totalOpenCost;
+        const totalUnrealizedPct = totalOpenCost > 0 ? (totalUnrealizedPnl / totalOpenCost) * 100 : 0;
+        const closedTrades = (exchanges || []).filter((e) => e.type === 'sell');
+        const totalRealizedPnl = closedTrades.reduce((s, t) => s + (t.realizedPnlPkr || 0), 0);
+
+        return (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <ArrowRightLeft size={14} color="#2563EB" />
+                <span style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  FX Conversions & P&L ({openLots.length} Active)
+                </span>
+              </div>
+              <button
+                onClick={onOpenExchange}
+                className="vlf-hover"
+                style={{
+                  background: 'none', border: 'none', color: '#2563EB', fontSize: 11.5,
+                  fontWeight: 700, cursor: 'pointer', padding: 0,
+                }}
+              >
+                + Convert / FX Tracker
+              </button>
+            </div>
+
+            <div style={{
+              background: C.surface, border: `1px solid ${C.line}`, borderRadius: 16,
+              padding: '12px 14px', boxShadow: '0 1px 3px rgba(20,17,13,0.03)',
+            }}>
+              {openLots.length === 0 && closedTrades.length === 0 ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, color: C.heading }}>No conversions logged yet</div>
+                    <div style={{ fontSize: 11, color: C.muted }}>Track conversions (e.g. PKR to EUR/TRY) & sales profit/loss.</div>
+                  </div>
+                  <button
+                    onClick={onOpenExchange}
+                    style={{
+                      padding: '6px 12px', borderRadius: 9, background: '#2563EB', color: '#fff',
+                      border: 'none', fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
+                    }}
+                  >
+                    Convert Now
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: openLots.length > 0 ? 10 : 0 }}>
+                    <div style={{ background: C.ice, padding: '8px 10px', borderRadius: 10 }}>
+                      <div style={{ fontSize: 9.5, color: C.muted, fontWeight: 700, textTransform: 'uppercase' }}>Holdings Value</div>
+                      <div style={{ fontFamily: MONO, fontSize: 13.5, fontWeight: 800, color: C.heading }}>
+                        Rs {fmtAmount(totalOpenMarketVal)}
+                      </div>
+                      <div style={{ fontSize: 9.5, color: C.muted }}>Cost: Rs {fmtAmount(totalOpenCost)}</div>
+                    </div>
+
+                    <div style={{
+                      background: totalUnrealizedPnl >= 0 ? 'rgba(30,158,100,0.08)' : 'rgba(178,58,52,0.08)',
+                      padding: '8px 10px', borderRadius: 10,
+                    }}>
+                      <div style={{ fontSize: 9.5, color: totalUnrealizedPnl >= 0 ? '#1E9E64' : '#B23A34', fontWeight: 700, textTransform: 'uppercase' }}>
+                        Unrealized P&L
+                      </div>
+                      <div style={{ fontFamily: MONO, fontSize: 13.5, fontWeight: 800, color: totalUnrealizedPnl >= 0 ? '#1E9E64' : '#B23A34' }}>
+                        {totalUnrealizedPnl >= 0 ? '+' : ''}Rs {fmtAmount(totalUnrealizedPnl)} ({totalUnrealizedPnl >= 0 ? '+' : ''}{totalUnrealizedPct.toFixed(1)}%)
+                      </div>
+                      <div style={{ fontSize: 9.5, color: totalRealizedPnl >= 0 ? '#1E9E64' : '#B23A34' }}>
+                        Realized: {totalRealizedPnl >= 0 ? '+' : ''}Rs {fmtAmount(totalRealizedPnl)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {openLots.length > 0 && (
+                    <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2 }}>
+                      {openLots.slice(0, 3).map((lot) => {
+                        const units = lot.remainingUnits != null ? lot.remainingUnits : lot.toAmount;
+                        const buyRate = lot.rateAtDeal || (lot.fromAmount / lot.toAmount);
+                        const liveRate = settings?.rates?.[lot.toCurrency] || 1;
+                        const pnl = (liveRate - buyRate) * units;
+                        return (
+                          <div
+                            key={lot.id}
+                            onClick={onOpenExchange}
+                            style={{
+                              flex: '1 0 140px', background: C.ice, padding: '7px 9px', borderRadius: 8,
+                              border: `1px solid ${C.line}`, cursor: 'pointer',
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <span style={{ fontSize: 11, fontWeight: 800, color: C.heading }}>
+                                {fmtAmount(units)} {lot.toCurrency}
+                              </span>
+                              <span style={{ fontSize: 9.5, fontWeight: 700, color: pnl >= 0 ? '#1E9E64' : '#B23A34' }}>
+                                {pnl >= 0 ? '+' : ''}Rs {fmtAmount(pnl)}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: 9, color: C.muted }}>
+                              @ Rs {fmtAmount(buyRate)} ➔ Today {fmtAmount(liveRate)}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Bill & Payment Reminders Section */}
       <RemindersSection
@@ -3202,7 +3329,7 @@ function ProfileMenu({ onOpenSettings, onSignOut }) {
 /* Add FAB menu — toggled by the + button, choose Add entry / Reminder / Calc */
 /* ------------------------------------------------------------------ */
 
-function FabMenu({ open, onClose, onAddEntry, onAddReminder, onAddUntracked, onCalculator }) {
+function FabMenu({ open, onClose, onAddEntry, onAddReminder, onAddUntracked, onCalculator, onExchange }) {
   const C = useColors();
   if (!open) return null;
   return (
@@ -3210,13 +3337,19 @@ function FabMenu({ open, onClose, onAddEntry, onAddReminder, onAddUntracked, onC
       <div style={{ position: 'fixed', inset: 0, zIndex: 38 }} onClick={onClose} />
       <div className="vlf-add-menu" style={{
         display: 'flex', flexDirection: 'column', gap: 6, background: C.surface, border: `1px solid ${C.line}`,
-        borderRadius: 16, padding: 8, boxShadow: '0 14px 34px rgba(0,0,0,0.35)', minWidth: 215,
+        borderRadius: 16, padding: 8, boxShadow: '0 14px 34px rgba(0,0,0,0.35)', minWidth: 225,
       }}>
         <button onClick={() => { onClose(); onAddEntry(); }} className="vlf-hover" style={{
           display: 'flex', alignItems: 'center', gap: 10, padding: '11px 12px', borderRadius: 11, border: 'none',
           background: 'none', color: C.heading, fontSize: 14, fontWeight: 700, textAlign: 'left', cursor: 'pointer',
         }}>
           <Plus size={16} color={C.navy} /> Add entry
+        </button>
+        <button onClick={() => { onClose(); onExchange && onExchange(); }} className="vlf-hover" style={{
+          display: 'flex', alignItems: 'center', gap: 10, padding: '11px 12px', borderRadius: 11, border: 'none',
+          background: 'none', color: C.heading, fontSize: 14, fontWeight: 700, textAlign: 'left', cursor: 'pointer',
+        }}>
+          <ArrowRightLeft size={16} color="#2563EB" /> Currency Conversion / FX
         </button>
         <button onClick={() => { onClose(); onAddReminder(); }} className="vlf-hover" style={{
           display: 'flex', alignItems: 'center', gap: 10, padding: '11px 12px', borderRadius: 11, border: 'none',
@@ -3604,7 +3737,1130 @@ function ReminderSheet({ open, onClose, onSave, onDelete, onPayAndAdd, settings,
 }
 
 /* ------------------------------------------------------------------ */
-/* Reminders Dashboard Section                                        */
+/* Exchange Sheet — Currency Conversion, Trade & Realized P&L Tracker */
+/* ------------------------------------------------------------------ */
+
+function ExchangeSheet({
+  open,
+  onClose,
+  onSaveExchange,
+  onDeleteExchange,
+  onCompleteSale,
+  exchanges = [],
+  settings,
+  entries = [],
+}) {
+  const C = useColors();
+  const [tab, setTab] = useState('convert'); // 'convert' | 'sell' | 'history'
+
+  // Convert (Buy Foreign Currency) form state
+  const [buyDate, setBuyDate] = useState(todayStr());
+  const [fromCurr, setFromCurr] = useState('PKR');
+  const [fromAmount, setFromAmount] = useState('');
+  const [toCurr, setToCurr] = useState('EUR');
+  const [toAmount, setToAmount] = useState('');
+  const [holdingSource, setHoldingSource] = useState('Cash in Hand');
+  const [dealerNote, setDealerNote] = useState('');
+  const [syncVault, setSyncVault] = useState(true);
+  const [buyTouched, setBuyTouched] = useState(false);
+
+  // Sell & Realize P&L form state
+  const [sellDate, setSellDate] = useState(todayStr());
+  const [selectedLotId, setSelectedLotId] = useState('');
+  const [sellUnits, setSellUnits] = useState('');
+  const [receiveCurr, setReceiveCurr] = useState('PKR');
+  const [receiveAmount, setReceiveAmount] = useState('');
+  const [saleNote, setSaleNote] = useState('');
+  const [syncSaleVault, setSyncSaleVault] = useState(true);
+  const [sellTouched, setSellTouched] = useState(false);
+
+  const openLots = useMemo(() => {
+    return (exchanges || [])
+      .filter((e) => e.type === 'buy' && (e.remainingUnits > 0 || (e.remainingUnits === undefined && e.status !== 'closed')))
+      .sort((a, b) => (a.date < b.date ? 1 : -1));
+  }, [exchanges]);
+
+  const closedTrades = useMemo(() => {
+    return (exchanges || [])
+      .filter((e) => e.type === 'sell')
+      .sort((a, b) => (a.date < b.date ? 1 : -1));
+  }, [exchanges]);
+
+  // Selected lot object for Sell flow
+  const activeLot = useMemo(() => {
+    return openLots.find((l) => l.id === selectedLotId) || openLots[0] || null;
+  }, [openLots, selectedLotId]);
+
+  useEffect(() => {
+    if (!open) return;
+    setBuyDate(todayStr());
+    setFromCurr('PKR');
+    setFromAmount('');
+    setToCurr('EUR');
+    setToAmount('');
+    setHoldingSource('Cash in Hand');
+    setDealerNote('');
+    setSyncVault(true);
+    setBuyTouched(false);
+
+    setSellDate(todayStr());
+    setReceiveCurr('PKR');
+    setReceiveAmount('');
+    setSaleNote('');
+    setSyncSaleVault(true);
+    setSellTouched(false);
+
+    if (openLots.length > 0) {
+      const first = openLots[0];
+      setSelectedLotId(first.id);
+      const units = first.remainingUnits != null ? first.remainingUnits : first.toAmount;
+      setSellUnits(String(units));
+    } else {
+      setSelectedLotId('');
+      setSellUnits('');
+    }
+  }, [open, openLots]);
+
+  if (!open) return null;
+
+  // Rate calculations for Buy / Convert
+  const numFromAmount = Number(fromAmount) || 0;
+  const numToAmount = Number(toAmount) || 0;
+  const canSaveBuy = numFromAmount > 0 && numToAmount > 0 && fromCurr !== toCurr;
+
+  // Universal official cross rate calculation for all currency pairs
+  const fromRatePkr = fromCurr === 'PKR' ? 1 : (settings?.rates?.[fromCurr] || 1);
+  const toRatePkr = toCurr === 'PKR' ? 1 : (settings?.rates?.[toCurr] || 1);
+  // Official cross rate: 1 toCurr in terms of fromCurr
+  const officialNetCrossRate = fromRatePkr > 0 ? (toRatePkr / fromRatePkr) : 1;
+  // Inverse: 1 fromCurr in terms of toCurr
+  const officialInverseRate = officialNetCrossRate > 0 ? (1 / officialNetCrossRate) : 1;
+
+  // What fromAmount yields at net official market rate
+  const officialNetYield = numFromAmount > 0 && officialNetCrossRate > 0
+    ? (numFromAmount / officialNetCrossRate)
+    : 0;
+
+  // Actual deal rate: 1 toCurr cost how much fromCurr
+  const dealRate = (numFromAmount > 0 && numToAmount > 0)
+    ? (numFromAmount / numToAmount)
+    : 0;
+
+  // Money changer spread vs official net rate across ALL currency pairs
+  const spreadPct = (officialNetCrossRate > 0 && dealRate > 0)
+    ? (((dealRate - officialNetCrossRate) / officialNetCrossRate) * 100)
+    : 0;
+
+  const unitDiff = (numToAmount > 0 && officialNetYield > 0)
+    ? (numToAmount - officialNetYield)
+    : 0;
+
+  const spreadCostFromCurr = (numToAmount > 0 && officialNetCrossRate > 0)
+    ? (numFromAmount - (numToAmount * officialNetCrossRate))
+    : 0;
+
+  // Calculations for Sell / Realize P&L
+  const numSellUnits = Number(sellUnits) || 0;
+  const numReceiveAmount = Number(receiveAmount) || 0;
+  const lotBuyRate = activeLot ? (activeLot.rateAtDeal || (activeLot.fromAmount / activeLot.toAmount)) : 0;
+  const costOfSoldUnits = numSellUnits * lotBuyRate;
+  const realizedPnl = numReceiveAmount > 0 ? numReceiveAmount - costOfSoldUnits : 0;
+  const realizedPnlPct = costOfSoldUnits > 0 ? (realizedPnl / costOfSoldUnits) * 100 : 0;
+  const exitDealRate = numSellUnits > 0 ? numReceiveAmount / numSellUnits : 0;
+  const rateGainPerUnit = exitDealRate - lotBuyRate;
+
+  // Exit official rate for Sell tab
+  const sellLotCurr = activeLot?.toCurrency || 'EUR';
+  const sellLotRatePkr = sellLotCurr === 'PKR' ? 1 : (settings?.rates?.[sellLotCurr] || 1);
+  const receiveRatePkr = receiveCurr === 'PKR' ? 1 : (settings?.rates?.[receiveCurr] || 1);
+  const sellOfficialCrossRate = receiveRatePkr > 0 ? (sellLotRatePkr / receiveRatePkr) : 1; // 1 sellLotCurr = X receiveCurr
+  const sellOfficialNetProceeds = numSellUnits > 0 ? (numSellUnits * sellOfficialCrossRate) : 0;
+  const sellSpreadPct = (sellOfficialCrossRate > 0 && exitDealRate > 0)
+    ? (((exitDealRate - sellOfficialCrossRate) / sellOfficialCrossRate) * 100)
+    : 0;
+
+  const canSaveSell = numSellUnits > 0 && numReceiveAmount > 0 && (activeLot || openLots.length === 0);
+
+  // Portfolio Totals
+  const totalOpenCost = openLots.reduce((s, l) => {
+    const units = l.remainingUnits != null ? l.remainingUnits : l.toAmount;
+    const rate = l.rateAtDeal || (l.fromAmount / l.toAmount) || 1;
+    return s + (units * rate);
+  }, 0);
+
+  const totalOpenMarketVal = openLots.reduce((s, l) => {
+    const units = l.remainingUnits != null ? l.remainingUnits : l.toAmount;
+    const live = settings?.rates?.[l.toCurrency] || 1;
+    return s + (units * live);
+  }, 0);
+
+  const totalUnrealizedPnl = totalOpenMarketVal - totalOpenCost;
+  const totalUnrealizedPct = totalOpenCost > 0 ? (totalUnrealizedPnl / totalOpenCost) * 100 : 0;
+  const totalRealizedPnl = closedTrades.reduce((s, t) => s + (t.realizedPnlPkr || 0), 0);
+
+  const QUICK_SUGGESTIONS = [50, 100, 500, 1000, 1500];
+
+  // Quick date helper
+  const setQuickDate = (daysFromNow, target = 'buy') => {
+    const d = new Date();
+    d.setDate(d.getDate() + daysFromNow);
+    const str = d.toISOString().slice(0, 10);
+    if (target === 'buy') setBuyDate(str);
+    else setSellDate(str);
+  };
+
+  const handleSaveBuy = () => {
+    setBuyTouched(true);
+    if (!canSaveBuy) return;
+
+    const record = {
+      id: uid(),
+      type: 'buy',
+      date: buyDate,
+      fromCurrency: fromCurr,
+      fromAmount: numFromAmount,
+      toCurrency: toCurr,
+      toAmount: numToAmount,
+      rateAtDeal: dealRate,
+      marketRateOnDay: officialNetCrossRate,
+      spreadPct: Number(spreadPct.toFixed(2)),
+      holdingSource,
+      note: dealerNote.trim(),
+      remainingUnits: numToAmount,
+      status: 'open',
+      createdAt: new Date().toISOString(),
+    };
+
+    onSaveExchange(record, syncVault);
+    onClose();
+  };
+
+  const handleSaveSell = () => {
+    setSellTouched(true);
+    if (!canSaveSell) return;
+
+    const sellRecord = {
+      id: uid(),
+      type: 'sell',
+      lotIdRef: activeLot?.id || null,
+      date: sellDate,
+      fromCurrency: activeLot?.toCurrency || 'EUR',
+      fromAmount: numSellUnits,
+      toCurrency: receiveCurr,
+      toAmount: numReceiveAmount,
+      costBasisPerUnit: lotBuyRate,
+      rateAtDeal: exitDealRate,
+      marketRateOnDay: settings?.rates?.[activeLot?.toCurrency || 'EUR'] || 1,
+      realizedPnlPkr: realizedPnl,
+      realizedPnlPct: Number(realizedPnlPct.toFixed(2)),
+      holdingSource: activeLot?.holdingSource || 'Cash in Hand',
+      note: saleNote.trim(),
+      status: 'closed',
+      createdAt: new Date().toISOString(),
+    };
+
+    onCompleteSale(sellRecord, activeLot?.id, numSellUnits, syncSaleVault);
+    onClose();
+  };
+
+  const handleSelectLotForSell = (lot) => {
+    setSelectedLotId(lot.id);
+    const units = lot.remainingUnits != null ? lot.remainingUnits : lot.toAmount;
+    setSellUnits(String(units));
+    setTab('sell');
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'flex-end', background: 'rgba(26,23,18,0.5)' }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: C.surface, width: '100%', maxWidth: 520, margin: '0 auto', borderRadius: '24px 24px 0 0',
+        maxHeight: '92vh', overflowY: 'auto', padding: '18px 18px 28px', fontFamily: SANS,
+        boxShadow: '0 -10px 34px rgba(26,23,18,0.28)',
+      }}>
+        {/* Top Handle */}
+        <div style={{ width: 40, height: 4, background: C.line, borderRadius: 2, margin: '0 auto 16px' }} />
+
+        {/* Modal Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+            <div style={{
+              width: 36, height: 36, borderRadius: 10, background: 'rgba(37,99,235,0.12)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <ArrowRightLeft size={19} color="#2563EB" />
+            </div>
+            <div>
+              <h2 style={{ fontFamily: SERIF, fontSize: 19, color: C.heading, margin: 0, fontWeight: 700 }}>
+                Currency Conversion & FX
+              </h2>
+              <div style={{ fontSize: 11, color: C.muted, fontWeight: 500 }}>
+                Track foreign currency purchases, rates & profit/loss
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: C.ice, border: 'none', borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+            <X size={16} color={C.heading} />
+          </button>
+        </div>
+
+        {/* 3 Main Action Tabs */}
+        <div style={{
+          display: 'flex', background: C.ice, padding: 3, borderRadius: 12, marginBottom: 16, border: `1px solid ${C.line}`,
+        }}>
+          {[
+            { k: 'convert', l: 'Convert / Buy', icon: Plus },
+            { k: 'sell', l: 'Sell & Realize P&L', icon: TrendingUp },
+            { k: 'history', l: `Portfolio (${openLots.length})`, icon: FileSpreadsheet },
+          ].map((t) => {
+            const active = tab === t.k;
+            const Icon = t.icon;
+            return (
+              <button
+                key={t.k}
+                type="button"
+                onClick={() => setTab(t.k)}
+                style={{
+                  flex: 1, padding: '8px 4px', borderRadius: 9, border: 'none',
+                  background: active ? C.surface : 'transparent',
+                  color: active ? C.heading : C.muted,
+                  boxShadow: active ? '0 2px 6px rgba(0,0,0,0.06)' : 'none',
+                  fontSize: 11.5, fontWeight: 700, display: 'flex', alignItems: 'center',
+                  justifyContent: 'center', gap: 4, cursor: 'pointer', transition: 'all .15s ease',
+                }}
+              >
+                <Icon size={13} color={active ? '#2563EB' : 'currentColor'} />
+                <span>{t.l}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* TAB 1: BUY / CONVERT FOREIGN CURRENCY ------------------------ */}
+        {tab === 'convert' && (
+          <div>
+            {/* Conversion Direction Visual */}
+            <div style={{
+              background: C.ice, borderRadius: 14, padding: '12px 14px', marginBottom: 14,
+              border: `1px solid ${C.line}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            }}>
+              <div>
+                <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: 'uppercase' }}>You Give / Pay</div>
+                <div style={{ fontFamily: SERIF, fontSize: 16, fontWeight: 700, color: C.heading }}>
+                  {CURRENCY_META[fromCurr]?.name || fromCurr}
+                </div>
+              </div>
+              <div style={{
+                width: 30, height: 30, borderRadius: '50%', background: C.surface,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${C.line}`,
+              }}>
+                <ArrowRightLeft size={14} color="#2563EB" />
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: 'uppercase' }}>You Receive / Buy</div>
+                <div style={{ fontFamily: SERIF, fontSize: 16, fontWeight: 700, color: '#2563EB' }}>
+                  {CURRENCY_META[toCurr]?.name || toCurr}
+                </div>
+              </div>
+            </div>
+
+            {/* Currency Selectors */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+              <div>
+                <SectionLabel>From Currency</SectionLabel>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {CURRENCIES.map((c) => (
+                    <Chip key={c} active={fromCurr === c} onClick={() => setFromCurr(c)} style={{ padding: '4px 8px', fontSize: 11 }}>
+                      {c}
+                    </Chip>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <SectionLabel>To Currency (Acquired)</SectionLabel>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {CURRENCIES.map((c) => (
+                    <Chip key={c} active={toCurr === c} onClick={() => setToCurr(c)} style={{ padding: '4px 8px', fontSize: 11 }}>
+                      {c}
+                    </Chip>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Amount Inputs with Suggestions */}
+            <div style={{ marginBottom: 12 }}>
+              {/* Paid Amount */}
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <SectionLabel style={{ margin: 0 }}>Amount Paid ({fromCurr}) *</SectionLabel>
+                  <div style={{ display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 2 }}>
+                    {QUICK_SUGGESTIONS.map((amt) => (
+                      <button
+                        key={amt}
+                        type="button"
+                        onClick={() => setFromAmount(String(amt))}
+                        style={{
+                          padding: '2px 7px', borderRadius: 6, fontSize: 10.5, fontWeight: 700,
+                          background: Number(fromAmount) === amt ? `${C.navy}18` : C.ice,
+                          border: `1px solid ${Number(fromAmount) === amt ? C.navy : C.line}`,
+                          color: Number(fromAmount) === amt ? C.navy : C.muted,
+                          cursor: 'pointer', whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {fmtAmount(amt)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 6, background: C.ice, borderRadius: 12,
+                  padding: '10px 12px', border: `1.5px solid ${buyTouched && !numFromAmount ? '#B23A34' : C.line}`,
+                }}>
+                  <span style={{ fontSize: 15, fontWeight: 700, color: C.muted }}>
+                    {CURRENCY_META[fromCurr]?.symbol || fromCurr}
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    placeholder="e.g. 100000"
+                    value={fromAmount}
+                    onChange={(e) => setFromAmount(e.target.value)}
+                    style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontFamily: MONO, fontSize: 16, fontWeight: 700, color: C.heading }}
+                  />
+                </div>
+              </div>
+
+              {/* Units Received */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <SectionLabel style={{ margin: 0 }}>Units Received ({toCurr}) *</SectionLabel>
+                  <div style={{ display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 2 }}>
+                    {QUICK_SUGGESTIONS.map((amt) => (
+                      <button
+                        key={amt}
+                        type="button"
+                        onClick={() => setToAmount(String(amt))}
+                        style={{
+                          padding: '2px 7px', borderRadius: 6, fontSize: 10.5, fontWeight: 700,
+                          background: Number(toAmount) === amt ? 'rgba(37,99,235,0.18)' : C.ice,
+                          border: `1px solid ${Number(toAmount) === amt ? '#2563EB' : C.line}`,
+                          color: Number(toAmount) === amt ? '#2563EB' : C.muted,
+                          cursor: 'pointer', whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {fmtAmount(amt)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 6, background: C.ice, borderRadius: 12,
+                  padding: '10px 12px', border: `1.5px solid ${buyTouched && !numToAmount ? '#B23A34' : C.line}`,
+                }}>
+                  <span style={{ fontSize: 15, fontWeight: 700, color: '#2563EB' }}>
+                    {CURRENCY_META[toCurr]?.symbol || toCurr}
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    placeholder="e.g. 300"
+                    value={toAmount}
+                    onChange={(e) => setToAmount(e.target.value)}
+                    style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontFamily: MONO, fontSize: 16, fontWeight: 700, color: C.heading }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Live Net Official Rate & Money Changer Spread Display */}
+            <div style={{
+              background: 'rgba(37,99,235,0.05)', borderRadius: 14, padding: '12px 14px', marginBottom: 14,
+              border: '1.5px solid rgba(37,99,235,0.2)',
+            }}>
+              {/* Current Net Official Rate */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <div style={{ fontSize: 10.5, fontWeight: 700, color: '#2563EB', textTransform: 'uppercase' }}>
+                  Current Net Market Rate
+                </div>
+                <div style={{ fontFamily: MONO, fontSize: 13.5, fontWeight: 800, color: C.heading }}>
+                  1 {toCurr} = {fmtAmount(officialNetCrossRate)} {fromCurr}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10.5, color: C.muted, marginBottom: numFromAmount > 0 ? 8 : 0 }}>
+                <span>1 {fromCurr} = {officialInverseRate < 0.01 ? officialInverseRate.toFixed(6) : officialInverseRate.toFixed(4)} {toCurr}</span>
+                {fromCurr !== 'PKR' && (
+                  <span>(1 {fromCurr} = Rs {fmtAmount(fromRatePkr)})</span>
+                )}
+              </div>
+
+              {/* What fromAmount yields at net official rate */}
+              {numFromAmount > 0 && (
+                <div style={{
+                  background: C.surface, borderRadius: 10, padding: '8px 10px', border: `1px solid ${C.line}`,
+                  marginBottom: (numToAmount > 0) ? 8 : 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                }}>
+                  <div>
+                    <div style={{ fontSize: 9.5, color: C.muted, fontWeight: 700, textTransform: 'uppercase' }}>
+                      Net Official Equivalent
+                    </div>
+                    <div style={{ fontFamily: MONO, fontSize: 13, fontWeight: 800, color: '#2563EB', marginTop: 1 }}>
+                      {fmtAmount(numFromAmount)} {fromCurr} = {fmtAmount(Number(officialNetYield.toFixed(2)))} {toCurr}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setToAmount(Number(officialNetYield.toFixed(2)).toString())}
+                    style={{
+                      padding: '4px 8px', borderRadius: 8, background: 'rgba(37,99,235,0.12)',
+                      border: '1px solid rgba(37,99,235,0.3)', color: '#2563EB', fontSize: 10.5,
+                      fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap',
+                    }}
+                  >
+                    ⚡ Use Net Rate
+                  </button>
+                </div>
+              )}
+
+              {/* When both amounts are entered: Deal rate vs Spread across ALL currencies */}
+              {numFromAmount > 0 && numToAmount > 0 && (
+                <div style={{ borderTop: `1px dashed ${C.line}`, paddingTop: 8, marginTop: 4 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                    <span style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>Your Deal Rate:</span>
+                    <span style={{ fontFamily: MONO, fontSize: 13.5, fontWeight: 800, color: C.heading }}>
+                      1 {toCurr} = {fmtAmount(dealRate)} {fromCurr}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
+                    <span style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>Money Changer Spread:</span>
+                    <span style={{
+                      fontSize: 11.5,
+                      fontWeight: 800,
+                      color: spreadPct > 0.05 ? '#B23A34' : spreadPct < -0.05 ? '#1E9E64' : C.heading,
+                    }}>
+                      {spreadPct > 0.05
+                        ? `+${spreadPct.toFixed(2)}% Markup / Premium`
+                        : spreadPct < -0.05
+                        ? `${spreadPct.toFixed(2)}% Below Market`
+                        : 'Exact Market Rate (0%)'}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10.5, color: C.muted }}>
+                    <span>Yield Difference:</span>
+                    <span style={{ fontFamily: MONO, fontWeight: 700, color: unitDiff >= 0 ? '#1E9E64' : '#B23A34' }}>
+                      {unitDiff >= 0 ? '+' : ''}{fmtAmount(Number(unitDiff.toFixed(2)))} {toCurr} ({spreadCostFromCurr >= 0 ? '+' : ''}{fmtAmount(Number(spreadCostFromCurr.toFixed(2)))} {fromCurr})
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Date Selection */}
+            <SectionLabel>Conversion Date</SectionLabel>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 8, overflowX: 'auto', paddingBottom: 2 }}>
+              {[
+                { l: 'Today', d: 0 },
+                { l: 'Yesterday', d: -1 },
+                { l: '3 Days Ago', d: -3 },
+                { l: '1 Week Ago', d: -7 },
+              ].map((q) => (
+                <button
+                  key={q.l}
+                  type="button"
+                  onClick={() => setQuickDate(q.d, 'buy')}
+                  style={{
+                    padding: '4px 8px', borderRadius: 8, fontSize: 11, fontWeight: 600,
+                    background: C.ice, border: `1px solid ${C.line}`, color: C.heading, cursor: 'pointer',
+                  }}
+                >
+                  {q.l}
+                </button>
+              ))}
+            </div>
+            <input
+              type="date"
+              value={buyDate}
+              onChange={(e) => setBuyDate(e.target.value)}
+              style={{
+                width: '100%', border: `1px solid ${C.line}`, borderRadius: 12, padding: '10px 12px',
+                fontSize: 13.5, marginBottom: 12, outline: 'none', color: C.heading, background: C.surface,
+                boxSizing: 'border-box', fontFamily: SANS,
+              }}
+            />
+
+            {/* Holding Source */}
+            <SectionLabel>Holding Account / Stored In</SectionLabel>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+              {HOLDING_SOURCES.map((s) => (
+                <Chip key={s} active={holdingSource === s} onClick={() => setHoldingSource(s)} style={{ padding: '4px 9px', fontSize: 11 }}>
+                  {s}
+                </Chip>
+              ))}
+            </div>
+
+            {/* Dealer & Notes */}
+            <SectionLabel>Dealer / Money Changer / Notes (optional)</SectionLabel>
+            <input
+              type="text"
+              value={dealerNote}
+              onChange={(e) => setDealerNote(e.target.value)}
+              placeholder="e.g. Airport Exchange, Mall Money Changer, Travel Trip…"
+              style={{
+                width: '100%', border: `1px solid ${C.line}`, borderRadius: 12, padding: '10px 12px',
+                fontSize: 13, marginBottom: 14, outline: 'none', color: C.heading, background: C.surface,
+                boxSizing: 'border-box', fontFamily: SANS,
+              }}
+            />
+
+            {/* Sync with Vault Checkbox */}
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: 9, background: C.ice, padding: '10px 12px',
+              borderRadius: 12, border: `1px solid ${C.line}`, marginBottom: 16, cursor: 'pointer',
+            }}>
+              <input
+                type="checkbox"
+                checked={syncVault}
+                onChange={(e) => setSyncVault(e.target.checked)}
+                style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#2563EB' }}
+              />
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.heading, lineHeight: 1.3 }}>
+                <strong>Sync with Vault Balance:</strong> Automatically record -{fromAmount || '0'} {fromCurr} and +{toAmount || '0'} {toCurr} in your accounts.
+              </span>
+            </label>
+
+            {/* Submit Button */}
+            <button
+              type="button"
+              onClick={handleSaveBuy}
+              disabled={!canSaveBuy}
+              style={{
+                width: '100%', padding: '13px', borderRadius: 14, border: 'none',
+                background: canSaveBuy ? '#2563EB' : C.silver, color: '#fff', fontSize: 14.5,
+                fontWeight: 700, cursor: canSaveBuy ? 'pointer' : 'default',
+              }}
+            >
+              Save Conversion & Add to Holdings
+            </button>
+          </div>
+        )}
+
+        {/* TAB 2: SELL & REALIZE PROFIT / LOSS ------------------------- */}
+        {tab === 'sell' && (
+          <div>
+            {openLots.length === 0 ? (
+              <div style={{
+                textAlign: 'center', padding: '30px 16px', background: C.ice, borderRadius: 16,
+                border: `1px dashed ${C.line}`, marginBottom: 16,
+              }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: C.heading, marginBottom: 4 }}>
+                  No Active Foreign Currency Holdings
+                </div>
+                <div style={{ fontSize: 12, color: C.muted, marginBottom: 14 }}>
+                  Log a foreign currency purchase under "Convert / Buy" first to track sales and realized profit/loss.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTab('convert')}
+                  style={{
+                    padding: '8px 16px', borderRadius: 10, background: '#2563EB', color: '#fff',
+                    border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                  }}
+                >
+                  + Add Currency Conversion
+                </button>
+              </div>
+            ) : (
+              <>
+                {/* Select Holding Lot to Sell From */}
+                <SectionLabel>Select Currency Holding Lot to Sell</SectionLabel>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+                  {openLots.map((lot) => {
+                    const isSelected = activeLot?.id === lot.id;
+                    const units = lot.remainingUnits != null ? lot.remainingUnits : lot.toAmount;
+                    const buyRate = lot.rateAtDeal || (lot.fromAmount / lot.toAmount);
+                    return (
+                      <div
+                        key={lot.id}
+                        onClick={() => {
+                          setSelectedLotId(lot.id);
+                          setSellUnits(String(units));
+                        }}
+                        style={{
+                          padding: '10px 12px', borderRadius: 12, cursor: 'pointer',
+                          border: `1.5px solid ${isSelected ? '#2563EB' : C.line}`,
+                          background: isSelected ? 'rgba(37,99,235,0.06)' : C.surface,
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          transition: 'all .15s ease',
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 800, color: C.heading }}>
+                            {fmtAmount(units)} {lot.toCurrency}
+                            <span style={{ fontSize: 11, fontWeight: 600, color: C.muted, marginLeft: 6 }}>
+                              (Bought @ Rs {fmtAmount(buyRate)}/{lot.toCurrency})
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 11, color: C.muted }}>
+                            Date: {lot.date} {lot.note ? `· ${lot.note}` : ''}
+                          </div>
+                        </div>
+
+                        <div style={{
+                          width: 20, height: 20, borderRadius: '50%',
+                          border: `2px solid ${isSelected ? '#2563EB' : C.silver}`,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          background: isSelected ? '#2563EB' : 'transparent',
+                        }}>
+                          {isSelected && <Check size={12} color="#fff" strokeWidth={3} />}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Sell Units & Received Proceeds with Suggestions */}
+                <div style={{ marginBottom: 12 }}>
+                  {/* Units to Sell */}
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                      <SectionLabel style={{ margin: 0 }}>Units to Sell ({activeLot?.toCurrency || 'EUR'}) *</SectionLabel>
+                      <div style={{ display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 2 }}>
+                        {QUICK_SUGGESTIONS.map((amt) => (
+                          <button
+                            key={amt}
+                            type="button"
+                            onClick={() => setSellUnits(String(amt))}
+                            style={{
+                              padding: '2px 7px', borderRadius: 6, fontSize: 10.5, fontWeight: 700,
+                              background: Number(sellUnits) === amt ? 'rgba(178,58,52,0.14)' : C.ice,
+                              border: `1px solid ${Number(sellUnits) === amt ? '#B23A34' : C.line}`,
+                              color: Number(sellUnits) === amt ? '#B23A34' : C.muted,
+                              cursor: 'pointer', whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {fmtAmount(amt)}
+                          </button>
+                        ))}
+                        {activeLot && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const avail = activeLot.remainingUnits != null ? activeLot.remainingUnits : activeLot.toAmount;
+                              setSellUnits(String(avail));
+                            }}
+                            style={{
+                              padding: '2px 7px', borderRadius: 6, fontSize: 10.5, fontWeight: 800,
+                              background: 'rgba(37,99,235,0.12)', border: '1px solid #2563EB',
+                              color: '#2563EB', cursor: 'pointer', whiteSpace: 'nowrap',
+                            }}
+                          >
+                            Max
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{
+                      display: 'flex', alignItems: 'center', gap: 6, background: C.ice, borderRadius: 12,
+                      padding: '10px 12px', border: `1.5px solid ${sellTouched && !numSellUnits ? '#B23A34' : C.line}`,
+                    }}>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: '#B23A34' }}>
+                        {CURRENCY_META[activeLot?.toCurrency || 'EUR']?.symbol || ''}
+                      </span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        placeholder="e.g. 300"
+                        value={sellUnits}
+                        onChange={(e) => setSellUnits(e.target.value)}
+                        style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontFamily: MONO, fontSize: 16, fontWeight: 700, color: C.heading }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Total Received */}
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                      <SectionLabel style={{ margin: 0 }}>Total Received ({receiveCurr}) *</SectionLabel>
+                      <div style={{ display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 2 }}>
+                        {QUICK_SUGGESTIONS.map((amt) => (
+                          <button
+                            key={amt}
+                            type="button"
+                            onClick={() => setReceiveAmount(String(amt))}
+                            style={{
+                              padding: '2px 7px', borderRadius: 6, fontSize: 10.5, fontWeight: 700,
+                              background: Number(receiveAmount) === amt ? 'rgba(30,158,100,0.14)' : C.ice,
+                              border: `1px solid ${Number(receiveAmount) === amt ? '#1E9E64' : C.line}`,
+                              color: Number(receiveAmount) === amt ? '#1E9E64' : C.muted,
+                              cursor: 'pointer', whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {fmtAmount(amt)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{
+                      display: 'flex', alignItems: 'center', gap: 6, background: C.ice, borderRadius: 12,
+                      padding: '10px 12px', border: `1.5px solid ${sellTouched && !numReceiveAmount ? '#B23A34' : C.line}`,
+                    }}>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: '#1E9E64' }}>
+                        {CURRENCY_META[receiveCurr]?.symbol || receiveCurr}
+                      </span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        placeholder="e.g. 105000"
+                        value={receiveAmount}
+                        onChange={(e) => setReceiveAmount(e.target.value)}
+                        style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontFamily: MONO, fontSize: 16, fontWeight: 700, color: C.heading }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Net Market Exit Rate & Auto-fill Info */}
+                <div style={{
+                  background: 'rgba(37,99,235,0.05)', borderRadius: 12, padding: '10px 12px', marginBottom: 12,
+                  border: '1px solid rgba(37,99,235,0.2)',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ fontSize: 11, color: C.muted }}>
+                      Current Net Market Exit:
+                      <span style={{ fontFamily: MONO, fontWeight: 700, color: C.heading, marginLeft: 4 }}>
+                        1 {sellLotCurr} = {fmtAmount(sellOfficialCrossRate)} {receiveCurr}
+                      </span>
+                    </div>
+                    {numSellUnits > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setReceiveAmount(Number(sellOfficialNetProceeds.toFixed(2)).toString())}
+                        style={{
+                          padding: '3px 8px', borderRadius: 7, background: 'rgba(37,99,235,0.12)',
+                          border: '1px solid rgba(37,99,235,0.3)', color: '#2563EB', fontSize: 10.5,
+                          fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap',
+                        }}
+                      >
+                        ⚡ Use Net ({fmtAmount(Number(sellOfficialNetProceeds.toFixed(0)))})
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Realized Profit & Loss Breakdown Card */}
+                {numSellUnits > 0 && numReceiveAmount > 0 && (
+                  <div style={{
+                    background: realizedPnl >= 0 ? 'rgba(30,158,100,0.08)' : 'rgba(178,58,52,0.08)',
+                    borderRadius: 14, padding: '14px', marginBottom: 14,
+                    border: `1.5px solid ${realizedPnl >= 0 ? 'rgba(30,158,100,0.3)' : 'rgba(178,58,52,0.3)'}`,
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <div style={{ fontSize: 11.5, fontWeight: 700, color: realizedPnl >= 0 ? '#1E9E64' : '#B23A34', textTransform: 'uppercase' }}>
+                        {realizedPnl >= 0 ? '🎉 Realized Profit (Nafa)' : '⚠️ Realized Loss (Nuqsan)'}
+                      </div>
+                      <div style={{ fontFamily: MONO, fontSize: 18, fontWeight: 800, color: realizedPnl >= 0 ? '#1E9E64' : '#B23A34' }}>
+                        {realizedPnl >= 0 ? '+' : ''}{fmtMoney(realizedPnl, receiveCurr)} ({realizedPnl >= 0 ? '+' : ''}{realizedPnlPct.toFixed(2)}%)
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 11, color: C.navySoft }}>
+                      <div>
+                        Original Cost: <strong>Rs {fmtAmount(costOfSoldUnits)}</strong>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        Sold At: <strong>Rs {fmtAmount(exitDealRate)}/{activeLot?.toCurrency}</strong>
+                      </div>
+                      <div>
+                        Bought At: <strong>Rs {fmtAmount(lotBuyRate)}/{activeLot?.toCurrency}</strong>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        Rate Spread: <strong style={{ color: rateGainPerUnit >= 0 ? '#1E9E64' : '#B23A34' }}>
+                          {rateGainPerUnit >= 0 ? '+' : ''}Rs {rateGainPerUnit.toFixed(2)} per unit
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Sale Date */}
+                <SectionLabel>Sale / Exchange Date</SectionLabel>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 8, overflowX: 'auto', paddingBottom: 2 }}>
+                  {[
+                    { l: 'Today', d: 0 },
+                    { l: 'Yesterday', d: -1 },
+                    { l: '3 Days Ago', d: -3 },
+                  ].map((q) => (
+                    <button
+                      key={q.l}
+                      type="button"
+                      onClick={() => setQuickDate(q.d, 'sell')}
+                      style={{
+                        padding: '4px 8px', borderRadius: 8, fontSize: 11, fontWeight: 600,
+                        background: C.ice, border: `1px solid ${C.line}`, color: C.heading, cursor: 'pointer',
+                      }}
+                    >
+                      {q.l}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="date"
+                  value={sellDate}
+                  onChange={(e) => setSellDate(e.target.value)}
+                  style={{
+                    width: '100%', border: `1px solid ${C.line}`, borderRadius: 12, padding: '10px 12px',
+                    fontSize: 13.5, marginBottom: 12, outline: 'none', color: C.heading, background: C.surface,
+                    boxSizing: 'border-box', fontFamily: SANS,
+                  }}
+                />
+
+                {/* Notes */}
+                <SectionLabel>Sale Notes (optional)</SectionLabel>
+                <input
+                  type="text"
+                  value={saleNote}
+                  onChange={(e) => setSaleNote(e.target.value)}
+                  placeholder="e.g. Sold to Money Changer, converted back after trip…"
+                  style={{
+                    width: '100%', border: `1px solid ${C.line}`, borderRadius: 12, padding: '10px 12px',
+                    fontSize: 13, marginBottom: 14, outline: 'none', color: C.heading, background: C.surface,
+                    boxSizing: 'border-box', fontFamily: SANS,
+                  }}
+                />
+
+                {/* Sync with Vault Checkbox */}
+                <label style={{
+                  display: 'flex', alignItems: 'center', gap: 9, background: C.ice, padding: '10px 12px',
+                  borderRadius: 12, border: `1px solid ${C.line}`, marginBottom: 16, cursor: 'pointer',
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={syncSaleVault}
+                    onChange={(e) => setSyncSaleVault(e.target.checked)}
+                    style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#1E9E64' }}
+                  />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: C.heading, lineHeight: 1.3 }}>
+                    <strong>Sync with Vault:</strong> Deduct {sellUnits || '0'} {activeLot?.toCurrency || 'EUR'} and credit +{receiveAmount || '0'} {receiveCurr} into your account.
+                  </span>
+                </label>
+
+                {/* Submit Button */}
+                <button
+                  type="button"
+                  onClick={handleSaveSell}
+                  disabled={!canSaveSell}
+                  style={{
+                    width: '100%', padding: '13px', borderRadius: 14, border: 'none',
+                    background: canSaveSell ? (realizedPnl >= 0 ? '#1E9E64' : '#B23A34') : C.silver,
+                    color: '#fff', fontSize: 14.5, fontWeight: 700, cursor: canSaveSell ? 'pointer' : 'default',
+                  }}
+                >
+                  Log Sale & Realize P&L ({realizedPnl >= 0 ? '+' : ''}{fmtMoney(realizedPnl, receiveCurr)})
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* TAB 3: PORTFOLIO & P&L HISTORY ------------------------------ */}
+        {tab === 'history' && (
+          <div>
+            {/* Top Portfolio Stats */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
+              <div style={{
+                background: C.ice, padding: '10px 12px', borderRadius: 12, border: `1px solid ${C.line}`,
+              }}>
+                <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: 'uppercase' }}>
+                  Active Holdings Cost
+                </div>
+                <div style={{ fontFamily: MONO, fontSize: 15, fontWeight: 800, color: C.heading, marginTop: 2 }}>
+                  Rs {fmtAmount(totalOpenCost)}
+                </div>
+                <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>
+                  Live Value: Rs {fmtAmount(totalOpenMarketVal)}
+                </div>
+              </div>
+
+              <div style={{
+                background: totalUnrealizedPnl >= 0 ? 'rgba(30,158,100,0.08)' : 'rgba(178,58,52,0.08)',
+                padding: '10px 12px', borderRadius: 12, border: `1px solid ${totalUnrealizedPnl >= 0 ? 'rgba(30,158,100,0.25)' : 'rgba(178,58,52,0.25)'}`,
+              }}>
+                <div style={{ fontSize: 10, color: totalUnrealizedPnl >= 0 ? '#1E9E64' : '#B23A34', fontWeight: 700, textTransform: 'uppercase' }}>
+                  Unrealized Live P&L
+                </div>
+                <div style={{ fontFamily: MONO, fontSize: 15, fontWeight: 800, color: totalUnrealizedPnl >= 0 ? '#1E9E64' : '#B23A34', marginTop: 2 }}>
+                  {totalUnrealizedPnl >= 0 ? '+' : ''}Rs {fmtAmount(totalUnrealizedPnl)}
+                </div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: totalUnrealizedPnl >= 0 ? '#1E9E64' : '#B23A34', marginTop: 2 }}>
+                  {totalUnrealizedPnl >= 0 ? '+' : ''}{totalUnrealizedPct.toFixed(2)}% vs today
+                </div>
+              </div>
+            </div>
+
+            {/* Total Realized Closed P&L Banner */}
+            {closedTrades.length > 0 && (
+              <div style={{
+                background: totalRealizedPnl >= 0 ? 'rgba(30,158,100,0.1)' : 'rgba(178,58,52,0.1)',
+                borderRadius: 12, padding: '10px 14px', marginBottom: 16,
+                border: `1px solid ${totalRealizedPnl >= 0 ? '#1E9E6433' : '#B23A3433'}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: totalRealizedPnl >= 0 ? '#1E9E64' : '#B23A34', textTransform: 'uppercase' }}>
+                    Total Realized Net Profit / Loss
+                  </div>
+                  <div style={{ fontSize: 10.5, color: C.muted }}>
+                    From {closedTrades.length} completed conversion trade{closedTrades.length > 1 ? 's' : ''}
+                  </div>
+                </div>
+                <div style={{ fontFamily: MONO, fontSize: 16, fontWeight: 800, color: totalRealizedPnl >= 0 ? '#1E9E64' : '#B23A34' }}>
+                  {totalRealizedPnl >= 0 ? '+' : ''}Rs {fmtAmount(totalRealizedPnl)}
+                </div>
+              </div>
+            )}
+
+            {/* Active Open Holdings Section */}
+            <SectionLabel>Active Foreign Currency Lots ({openLots.length})</SectionLabel>
+            {openLots.length === 0 ? (
+              <div style={{ fontSize: 12, color: C.muted, padding: '12px 0', textAlign: 'center' }}>
+                No open currency lots.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
+                {openLots.map((lot) => {
+                  const units = lot.remainingUnits != null ? lot.remainingUnits : lot.toAmount;
+                  const buyRate = lot.rateAtDeal || (lot.fromAmount / lot.toAmount);
+                  const costPkr = units * buyRate;
+                  const liveRate = settings?.rates?.[lot.toCurrency] || 1;
+                  const liveValPkr = units * liveRate;
+                  const unPnl = liveValPkr - costPkr;
+                  const unPct = costPkr > 0 ? (unPnl / costPkr) * 100 : 0;
+
+                  return (
+                    <div
+                      key={lot.id}
+                      style={{
+                        background: C.surface, borderRadius: 14, padding: '12px 14px',
+                        border: `1px solid ${C.line}`, boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                          <span style={{ fontSize: 16 }}>{CURRENCY_META[lot.toCurrency]?.flag || '🌐'}</span>
+                          <span style={{ fontSize: 14, fontWeight: 800, color: C.heading }}>
+                            {fmtAmount(units)} {lot.toCurrency}
+                          </span>
+                        </div>
+                        <span style={{
+                          fontSize: 11, fontWeight: 700, padding: '2px 7px', borderRadius: 6,
+                          background: unPnl >= 0 ? 'rgba(30,158,100,0.12)' : 'rgba(178,58,52,0.12)',
+                          color: unPnl >= 0 ? '#1E9E64' : '#B23A34',
+                        }}>
+                          {unPnl >= 0 ? '+' : ''}Rs {fmtAmount(unPnl)} ({unPnl >= 0 ? '+' : ''}{unPct.toFixed(1)}%)
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, fontSize: 11, color: C.muted, marginBottom: 8 }}>
+                        <div>Cost: Rs {fmtAmount(costPkr)} (@ Rs {fmtAmount(buyRate)}/{lot.toCurrency})</div>
+                        <div style={{ textAlign: 'right' }}>Today: Rs {fmtAmount(liveRate)}/{lot.toCurrency}</div>
+                        <div>Date: {lot.date}</div>
+                        <div style={{ textAlign: 'right' }}>{lot.holdingSource}</div>
+                      </div>
+
+                      {lot.note && (
+                        <div style={{ fontSize: 11, color: C.navySoft, marginBottom: 8, fontStyle: 'italic' }}>
+                          Note: {lot.note}
+                        </div>
+                      )}
+
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          type="button"
+                          onClick={() => handleSelectLotForSell(lot)}
+                          className="vlf-hover"
+                          style={{
+                            flex: 1, padding: '7px 10px', borderRadius: 8, border: 'none',
+                            background: '#2563EB', color: '#fff', fontSize: 11.5, fontWeight: 700,
+                            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                          }}
+                        >
+                          <TrendingUp size={13} /> Sell & Realize P&L
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onDeleteExchange(lot.id)}
+                          className="vlf-hover"
+                          style={{
+                            padding: '7px 10px', borderRadius: 8, border: '1px solid #7A2E2E33',
+                            background: C.surface, color: '#7A2E2E', fontSize: 11.5, fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Closed Realized Sales Section */}
+            {closedTrades.length > 0 && (
+              <>
+                <SectionLabel>Closed Trades & Realized P&L History ({closedTrades.length})</SectionLabel>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {closedTrades.map((tr) => (
+                    <div
+                      key={tr.id}
+                      style={{
+                        background: C.surface, borderRadius: 12, padding: '11px 13px',
+                        border: `1px solid ${C.line}`,
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: C.heading }}>
+                          Sold {fmtAmount(tr.fromAmount)} {tr.fromCurrency} ➔ {fmtMoney(tr.toAmount, tr.toCurrency)}
+                        </div>
+                        <span style={{
+                          fontFamily: MONO, fontSize: 12, fontWeight: 800,
+                          color: (tr.realizedPnlPkr || 0) >= 0 ? '#1E9E64' : '#B23A34',
+                        }}>
+                          {(tr.realizedPnlPkr || 0) >= 0 ? '+' : ''}{fmtMoney(tr.realizedPnlPkr || 0, tr.toCurrency)}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, fontSize: 10.5, color: C.muted }}>
+                        <div>Sold on: {tr.date}</div>
+                        <div style={{ textAlign: 'right' }}>
+                          P&L: <strong>{(tr.realizedPnlPct || 0) >= 0 ? '+' : ''}{(tr.realizedPnlPct || 0).toFixed(2)}%</strong>
+                        </div>
+                        <div>
+                          Bought @ Rs {fmtAmount(tr.costBasisPerUnit || 0)}
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          Sold @ Rs {fmtAmount(tr.rateAtDeal || 0)}
+                        </div>
+                      </div>
+
+                      {tr.note && (
+                        <div style={{ fontSize: 10.5, color: C.navySoft, marginTop: 4 }}>
+                          {tr.note}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 /* ------------------------------------------------------------------ */
 
 function getReminderStatus(dueDateStr) {
@@ -4674,6 +5930,8 @@ export default function App() {
   const [reminders, setReminders] = useState([]);
   const [reminderSheetOpen, setReminderSheetOpen] = useState(false);
   const [editingReminder, setEditingReminder] = useState(null);
+  const [exchanges, setExchanges] = useState([]);
+  const [exchangeSheetOpen, setExchangeSheetOpen] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [screen, setScreen] = useState('dashboard');
   const [activeCurrency, setActiveCurrency] = useState('PKR');
@@ -4765,6 +6023,18 @@ export default function App() {
         console.error('Error loading reminders:', err);
       }
 
+      // Load saved currency conversions & FX trades
+      try {
+        const localExchanges = localStorage.getItem(`vaultify_exchanges_${uidVal}`);
+        if (localExchanges) {
+          setExchanges(JSON.parse(localExchanges));
+        } else if (settingsRow?.budget_limits?.exchanges) {
+          setExchanges(settingsRow.budget_limits.exchanges);
+        }
+      } catch (err) {
+        console.error('Error loading exchanges:', err);
+      }
+
       setDataLoaded(true);
 
       const isStale = !current.ratesFetchedAt || Date.now() - new Date(current.ratesFetchedAt).getTime() > 6 * 60 * 60 * 1000;
@@ -4798,6 +6068,118 @@ export default function App() {
       }
     }
   }, [session]);
+
+  const persistExchanges = useCallback((nextList) => {
+    setExchanges(nextList);
+    if (session?.user?.id) {
+      try {
+        localStorage.setItem(`vaultify_exchanges_${session.user.id}`, JSON.stringify(nextList));
+      } catch (err) {
+        console.error('Error storing exchanges:', err);
+      }
+    }
+  }, [session]);
+
+  const handleSaveExchange = async (record, syncVault) => {
+    const nextList = [record, ...exchanges];
+    persistExchanges(nextList);
+    setShowStamp(true);
+    setTimeout(() => setShowStamp(false), 900);
+
+    if (syncVault && session?.user?.id) {
+      const uidVal = session.user.id;
+      const debitEntry = {
+        id: uid(),
+        type: 'expense',
+        amount: Number(record.fromAmount),
+        currency: record.fromCurrency,
+        category: 'Currency Exchange',
+        holdingSource: record.holdingSource || 'Cash in Hand',
+        note: `[FX Conversion Out] Sold ${fmtMoney(record.fromAmount, record.fromCurrency)} for ${fmtMoney(record.toAmount, record.toCurrency)} @ Rs ${fmtAmount(record.rateAtDeal)}/${record.toCurrency}${record.note ? ` · ${record.note}` : ''}`,
+        date: record.date || todayStr(),
+      };
+      const creditEntry = {
+        id: uid(),
+        type: 'saving',
+        amount: Number(record.toAmount),
+        currency: record.toCurrency,
+        category: 'Currency Exchange',
+        holdingSource: record.holdingSource || 'Cash in Hand',
+        note: `[FX Holding In] Bought ${fmtMoney(record.toAmount, record.toCurrency)} with ${fmtMoney(record.fromAmount, record.fromCurrency)} @ Rs ${fmtAmount(record.rateAtDeal)}/${record.toCurrency}${record.note ? ` · ${record.note}` : ''}`,
+        date: record.date || todayStr(),
+      };
+
+      try {
+        await supabase.from('entries').insert([
+          { ...entryToDb(debitEntry), user_id: uidVal },
+          { ...entryToDb(creditEntry), user_id: uidVal },
+        ]);
+        setEntries((prev) => [debitEntry, creditEntry, ...prev]);
+      } catch (err) {
+        console.error('Error syncing exchange entries:', err);
+      }
+    }
+  };
+
+  const handleCompleteSale = async (sellRecord, lotId, sellUnits, syncVault) => {
+    let nextList = exchanges.map((e) => {
+      if (e.id === lotId) {
+        const currentUnits = e.remainingUnits != null ? e.remainingUnits : e.toAmount;
+        const remaining = Math.max(0, currentUnits - sellUnits);
+        return {
+          ...e,
+          remainingUnits: remaining,
+          status: remaining <= 0 ? 'closed' : 'open',
+        };
+      }
+      return e;
+    });
+
+    nextList = [sellRecord, ...nextList];
+    persistExchanges(nextList);
+    setShowStamp(true);
+    setTimeout(() => setShowStamp(false), 900);
+
+    if (syncVault && session?.user?.id) {
+      const uidVal = session.user.id;
+      const debitEntry = {
+        id: uid(),
+        type: 'expense',
+        amount: Number(sellRecord.fromAmount),
+        currency: sellRecord.fromCurrency,
+        category: 'Currency Exchange',
+        holdingSource: sellRecord.holdingSource || 'Cash in Hand',
+        note: `[FX Sale Out] Sold ${fmtMoney(sellRecord.fromAmount, sellRecord.fromCurrency)} for ${fmtMoney(sellRecord.toAmount, sellRecord.toCurrency)}${sellRecord.note ? ` · ${sellRecord.note}` : ''}`,
+        date: sellRecord.date || todayStr(),
+      };
+      const isProfit = (sellRecord.realizedPnlPkr || 0) >= 0;
+      const creditEntry = {
+        id: uid(),
+        type: 'income',
+        amount: Number(sellRecord.toAmount),
+        currency: sellRecord.toCurrency,
+        category: isProfit ? 'Forex Return / Capital Gain' : 'Currency Exchange',
+        holdingSource: sellRecord.holdingSource || 'Cash in Hand',
+        note: `[FX Realized Proceeds] Sold ${fmtMoney(sellRecord.fromAmount, sellRecord.fromCurrency)} @ Rs ${fmtAmount(sellRecord.rateAtDeal)}/${sellRecord.fromCurrency} (P&L: ${isProfit ? '+' : ''}${fmtMoney(sellRecord.realizedPnlPkr || 0, sellRecord.toCurrency)})${sellRecord.note ? ` · ${sellRecord.note}` : ''}`,
+        date: sellRecord.date || todayStr(),
+      };
+
+      try {
+        await supabase.from('entries').insert([
+          { ...entryToDb(debitEntry), user_id: uidVal },
+          { ...entryToDb(creditEntry), user_id: uidVal },
+        ]);
+        setEntries((prev) => [debitEntry, creditEntry, ...prev]);
+      } catch (err) {
+        console.error('Error syncing sale entries:', err);
+      }
+    }
+  };
+
+  const handleDeleteExchange = (exchangeId) => {
+    const next = exchanges.filter((e) => e.id !== exchangeId);
+    persistExchanges(next);
+  };
 
   const handleSaveReminder = (reminder) => {
     const exists = reminders.some((r) => r.id === reminder.id);
@@ -4999,6 +6381,7 @@ export default function App() {
             open={addMenuOpen}
             onClose={() => setAddMenuOpen(false)}
             onAddEntry={() => { setEditingEntry(null); setSheetOpen(true); }}
+            onExchange={() => setExchangeSheetOpen(true)}
             onAddReminder={() => { setEditingReminder(null); setReminderSheetOpen(true); }}
             onAddUntracked={() => {
               setEditingEntry({
@@ -5044,6 +6427,9 @@ export default function App() {
                 }}
                 onToggleReminder={handleToggleReminder}
                 onPayAndLogReminder={handlePayAndLogReminder}
+                exchanges={exchanges}
+                onOpenExchange={() => setExchangeSheetOpen(true)}
+                onDeleteExchange={handleDeleteExchange}
               />
             )}
             {screen === 'history' && (
@@ -5121,6 +6507,16 @@ export default function App() {
             onPayAndAdd={handlePayAndLogReminder}
             settings={settings}
             initial={editingReminder}
+          />
+          <ExchangeSheet
+            open={exchangeSheetOpen}
+            onClose={() => setExchangeSheetOpen(false)}
+            onSaveExchange={handleSaveExchange}
+            onCompleteSale={handleCompleteSale}
+            onDeleteExchange={handleDeleteExchange}
+            exchanges={exchanges}
+            settings={settings}
+            entries={entries}
           />
           <SettingsSheet
             open={settingsOpen}
