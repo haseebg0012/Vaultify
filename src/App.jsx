@@ -16,12 +16,12 @@ import { supabase } from './supabaseClient';
 
 const CURRENCIES = ['PKR', 'TRY', 'USD', 'EUR', 'GBP', 'USDT'];
 const CURRENCY_META = {
-  PKR: { symbol: 'Rs ', cleanSymbol: '₨' },
-  TRY: { symbol: '₺', cleanSymbol: '₺' },
-  USD: { symbol: '$', cleanSymbol: '$' },
-  EUR: { symbol: '€', cleanSymbol: '€' },
-  GBP: { symbol: '£', cleanSymbol: '£' },
-  USDT: { symbol: 'USDT ', cleanSymbol: '₮' },
+  PKR: { symbol: 'Rs ', cleanSymbol: '₨', name: 'PKR (Pakistani Rupee)', shortName: 'PKR', flag: '🇵🇰' },
+  TRY: { symbol: '₺', cleanSymbol: '₺', name: 'TRY / TL (Turkish Lira)', shortName: 'TL / TRY', flag: '🇹🇷' },
+  USD: { symbol: '$', cleanSymbol: '$', name: 'USD (US Dollar)', shortName: 'USD', flag: '🇺🇸' },
+  EUR: { symbol: '€', cleanSymbol: '€', name: 'EUR (Euro)', shortName: 'EUR', flag: '🇪🇺' },
+  GBP: { symbol: '£', cleanSymbol: '£', name: 'GBP (British Pound)', shortName: 'GBP', flag: '🇬🇧' },
+  USDT: { symbol: 'USDT ', cleanSymbol: '₮', name: 'USDT (Tether USD)', shortName: 'USDT', flag: '₮' },
 };
 const CATEGORY_MAP = {
   expense: ['Food', 'Transport', 'Bills', 'Shopping', 'Health', 'Other'],
@@ -403,7 +403,7 @@ function EntrySheet({ open, onClose, onSave, onDelete, settings, initial, saving
         </div>
 
         <SectionLabel>Type</SectionLabel>
-        <div style={{ display: 'flex', gap: 6, marginBottom: 18 }}>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
           {TYPES.map((t) => {
             const Icon = t.icon; const active = type === t.key;
             return (
@@ -418,16 +418,38 @@ function EntrySheet({ open, onClose, onSave, onDelete, settings, initial, saving
           })}
         </div>
 
-        <SectionLabel>Amount</SectionLabel>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: C.ice, borderRadius: 14, padding: '11px 15px', marginBottom: 18, border: `1px solid ${C.line}` }}>
-          <span style={{ fontFamily: SERIF, fontSize: 20, color: activeType.color }}>{CURRENCY_META[currency].symbol}</span>
-          <input ref={amountRef} type="number" inputMode="decimal" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)}
-            style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontFamily: MONO, fontSize: 23, fontWeight: 600, color: C.heading }} />
+        {/* Dynamic type hint */}
+        <div style={{
+          fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 8, marginBottom: 16,
+          background: `${activeType.color}10`, color: activeType.color, border: `1px solid ${activeType.color}25`,
+          display: 'flex', alignItems: 'center', gap: 6,
+        }}>
+          <span>
+            {type === 'income' ? '➕ Money will be added to your current balance.' :
+             type === 'expense' ? '➖ Money will be deducted from your current balance.' :
+             type === 'saving' ? '🛡️ Money allocated to your savings reserve.' :
+             type === 'investment' ? '📈 Money allocated to your investments.' :
+             '❓ Deducted as untracked / forgotten discrepancy.'}
+          </span>
         </div>
 
         <SectionLabel>Currency</SectionLabel>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 18, overflowX: 'auto', paddingBottom: 2 }}>
-          {CURRENCIES.map((c) => <Chip key={c} active={currency === c} onClick={() => setCurrency(c)}>{c}</Chip>)}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12, overflowX: 'auto', paddingBottom: 2 }}>
+          {CURRENCIES.map((c) => (
+            <Chip key={c} active={currency === c} onClick={() => setCurrency(c)}>
+              {CURRENCY_META[c]?.shortName || c}
+            </Chip>
+          ))}
+        </div>
+        <div style={{ fontSize: 11, color: C.muted, marginTop: -6, marginBottom: 16, fontWeight: 600 }}>
+          Selected: <strong style={{ color: C.heading }}>{CURRENCY_META[currency]?.name || currency}</strong>
+        </div>
+
+        <SectionLabel>Amount ({CURRENCY_META[currency]?.shortName || currency})</SectionLabel>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: C.ice, borderRadius: 14, padding: '11px 15px', marginBottom: 18, border: `1px solid ${C.line}` }}>
+          <span style={{ fontFamily: SERIF, fontSize: 20, color: activeType.color, fontWeight: 700 }}>{CURRENCY_META[currency]?.symbol || currency}</span>
+          <input ref={amountRef} type="number" inputMode="decimal" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)}
+            style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontFamily: MONO, fontSize: 23, fontWeight: 600, color: C.heading }} />
         </div>
 
         <SectionLabel>Category (optional)</SectionLabel>
@@ -1635,6 +1657,44 @@ function HistoryScreen({ entries, onEdit, settings, initialCurrency, onCurrencyC
     return { map, mapPkr };
   }, [entries, filterCurrency, range, settings?.rates]);
 
+  // Per-currency breakdown across all categories for range
+  const perCurrencyBreakdown = useMemo(() => {
+    const now = new Date();
+    const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay());
+    const startOfWeekStr = startOfWeek.toISOString().slice(0, 10);
+    const startOfMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+
+    const baseEntries = entries
+      .filter((e) => range === 'week' ? e.date >= startOfWeekStr : range === 'month' ? e.date >= startOfMonthStr : true);
+
+    const breakdown = {
+      income: {},
+      expense: {},
+      saving: {},
+      investment: {},
+      unaccounted: {},
+    };
+
+    CURRENCIES.forEach((c) => {
+      breakdown.income[c] = { amount: 0, count: 0, pkr: 0 };
+      breakdown.expense[c] = { amount: 0, count: 0, pkr: 0 };
+      breakdown.saving[c] = { amount: 0, count: 0, pkr: 0 };
+      breakdown.investment[c] = { amount: 0, count: 0, pkr: 0 };
+      breakdown.unaccounted[c] = { amount: 0, count: 0, pkr: 0 };
+    });
+
+    baseEntries.forEach((e) => {
+      if (breakdown[e.type] && breakdown[e.type][e.currency]) {
+        const amt = Number(e.amount) || 0;
+        breakdown[e.type][e.currency].amount += amt;
+        breakdown[e.type][e.currency].count += 1;
+        breakdown[e.type][e.currency].pkr += toBase(amt, e.currency, settings?.rates || DEFAULT_RATES);
+      }
+    });
+
+    return breakdown;
+  }, [entries, range, settings?.rates]);
+
   // Overall calculations for the bottom summary block
   const totalSummary = useMemo(() => {
     let totalBase = 0;
@@ -1781,6 +1841,8 @@ function HistoryScreen({ entries, onEdit, settings, initialCurrency, onCurrencyC
           const isActive = filterType === st.key;
           const rawVal = totalsByType.map[st.key];
           const pkrVal = totalsByType.mapPkr[st.key];
+          const activeCurrs = CURRENCIES.filter((c) => (perCurrencyBreakdown[st.key]?.[c]?.amount || 0) > 0);
+
           return (
             <button
               key={st.key}
@@ -1791,7 +1853,7 @@ function HistoryScreen({ entries, onEdit, settings, initialCurrency, onCurrencyC
                 background: isActive ? `${st.color}15` : C.surface,
                 border: `1.5px solid ${isActive ? st.color : C.line}`,
                 borderRadius: 14,
-                padding: '8px 2px',
+                padding: '8px 4px',
                 textAlign: 'center',
                 display: 'flex',
                 flexDirection: 'column',
@@ -1824,19 +1886,63 @@ function HistoryScreen({ entries, onEdit, settings, initialCurrency, onCurrencyC
               }}>
                 {st.label}
               </div>
-              <div style={{
-                fontFamily: MONO,
-                fontSize: 9.5,
-                fontWeight: 800,
-                color: st.color,
-                lineHeight: 1.1,
-              }}>
-                {filterCurrency === 'All' ? `Rs ${fmtAmount(pkrVal)}` : fmtMoney(rawVal, filterCurrency)}
-              </div>
-              {filterCurrency !== 'All' && filterCurrency !== 'PKR' && (
-                <div style={{ fontFamily: MONO, fontSize: 6.5, color: C.muted, fontWeight: 600, letterSpacing: '0.02em', lineHeight: 1 }}>
-                  ≈ Rs {fmtAmount(pkrVal)}
-                </div>
+
+              {/* Currency amount display: line-by-line breakdown when All is selected */}
+              {filterCurrency === 'All' ? (
+                activeCurrs.length > 0 ? (
+                  <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 1.5, marginTop: 1 }}>
+                    {activeCurrs.map((c) => {
+                      const amt = perCurrencyBreakdown[st.key]?.[c]?.amount || 0;
+                      const short = c === 'TRY' ? 'TL' : c;
+                      const sym = CURRENCY_META[c]?.cleanSymbol || c;
+                      return (
+                        <div
+                          key={c}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            fontSize: 7.5,
+                            fontFamily: MONO,
+                            fontWeight: 800,
+                            color: st.color,
+                            lineHeight: 1.1,
+                            padding: '0 2px',
+                          }}
+                        >
+                          <span style={{ fontSize: 7, fontWeight: 800, opacity: 0.8 }}>{short}:</span>
+                          <span>{sym}{fmtAmount(amt)}</span>
+                        </div>
+                      );
+                    })}
+                    {activeCurrs.length > 1 && (
+                      <div style={{ fontFamily: MONO, fontSize: 6.5, color: C.muted, fontWeight: 700, letterSpacing: '0.01em', lineHeight: 1, marginTop: 1 }}>
+                        ≈ Rs {fmtAmount(pkrVal)}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 800, color: st.color, lineHeight: 1.1 }}>
+                    Rs 0.00
+                  </div>
+                )
+              ) : (
+                <>
+                  <div style={{
+                    fontFamily: MONO,
+                    fontSize: 9.5,
+                    fontWeight: 800,
+                    color: st.color,
+                    lineHeight: 1.1,
+                  }}>
+                    {fmtMoney(rawVal, filterCurrency)}
+                  </div>
+                  {filterCurrency !== 'PKR' && (
+                    <div style={{ fontFamily: MONO, fontSize: 6.5, color: C.muted, fontWeight: 600, letterSpacing: '0.02em', lineHeight: 1 }}>
+                      ≈ Rs {fmtAmount(pkrVal)}
+                    </div>
+                  )}
+                </>
               )}
             </button>
           );
@@ -1921,21 +2027,161 @@ function HistoryScreen({ entries, onEdit, settings, initialCurrency, onCurrencyC
       </div>
 
       {/* Time Range Chips */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         {[{ k: 'all', l: 'All time' }, { k: 'week', l: 'This week' }, { k: 'month', l: 'This month' }].map((r) => (
           <Chip key={r.k} active={range === r.k} onClick={() => setRange(r.k)}>{r.l}</Chip>
         ))}
       </div>
 
+      {/* Line-by-Line Currency Breakdown for Selected Category */}
+      {filterType !== 'All' && (
+        <Card style={{ padding: 14, marginBottom: 18, border: `1.5px solid ${TYPES.find((t) => t.key === filterType)?.color || C.navy}33` }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              {React.createElement(TYPES.find((t) => t.key === filterType)?.icon || Wallet, {
+                size: 16,
+                color: TYPES.find((t) => t.key === filterType)?.color || C.heading,
+              })}
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.heading }}>
+                {TYPES.find((t) => t.key === filterType)?.label} by Currency
+              </div>
+            </div>
+            <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 600 }}>
+              {range === 'all' ? 'All time' : range === 'week' ? 'This week' : 'This month'}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {CURRENCIES.map((c) => {
+              const data = perCurrencyBreakdown[filterType]?.[c] || { amount: 0, count: 0, pkr: 0 };
+              const isCurrActive = filterCurrency === c;
+              return (
+                <div
+                  key={c}
+                  onClick={() => handleCurrencySelect(filterCurrency === c ? 'All' : c)}
+                  className="vlf-hover"
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '8px 10px', borderRadius: 10,
+                    background: isCurrActive ? `${TYPES.find((t) => t.key === filterType)?.color}15` : C.ice,
+                    border: `1px solid ${isCurrActive ? TYPES.find((t) => t.key === filterType)?.color : C.line}`,
+                    cursor: 'pointer', transition: 'all .15s ease',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <CoinIcon currency={c} size={24} />
+                    <div>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: C.heading }}>
+                        {CURRENCY_META[c]?.name || c}
+                      </div>
+                      <div style={{ fontSize: 9.5, color: C.muted, fontWeight: 500 }}>
+                        {data.count} {data.count === 1 ? 'entry' : 'entries'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{
+                      fontFamily: MONO, fontSize: 13, fontWeight: 700,
+                      color: data.amount > 0 ? (TYPES.find((t) => t.key === filterType)?.color || C.heading) : C.muted,
+                    }}>
+                      {fmtMoney(data.amount, c)}
+                    </div>
+                    {c !== 'PKR' && data.amount > 0 && (
+                      <div style={{ fontFamily: MONO, fontSize: 8, color: C.muted, fontWeight: 600 }}>
+                        ≈ Rs {fmtAmount(data.pkr)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* Multi-Currency Matrix for All Types */}
+      {filterType === 'All' && (
+        <Card style={{ padding: 14, marginBottom: 18 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.heading, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <ArrowUpDown size={15} color={C.steel} />
+              <span>Currency Summary ({range === 'all' ? 'All time' : range === 'week' ? 'This week' : 'This month'})</span>
+            </div>
+            {filterCurrency !== 'All' && (
+              <button
+                type="button"
+                onClick={() => handleCurrencySelect('All')}
+                style={{ fontSize: 10.5, fontWeight: 700, color: C.navy, background: 'none', border: 'none', cursor: 'pointer' }}
+              >
+                Reset to All
+              </button>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {CURRENCIES.map((c) => {
+              const inc = perCurrencyBreakdown.income?.[c]?.amount || 0;
+              const exp = perCurrencyBreakdown.expense?.[c]?.amount || 0;
+              const sav = perCurrencyBreakdown.saving?.[c]?.amount || 0;
+              const inv = perCurrencyBreakdown.investment?.[c]?.amount || 0;
+              const unt = perCurrencyBreakdown.unaccounted?.[c]?.amount || 0;
+              const net = inc + sav + inv - exp - unt;
+              const hasActivity = inc > 0 || exp > 0 || sav > 0 || inv > 0 || unt > 0;
+              const isCurrActive = filterCurrency === c;
+
+              return (
+                <div
+                  key={c}
+                  onClick={() => handleCurrencySelect(filterCurrency === c ? 'All' : c)}
+                  className="vlf-hover"
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '8px 10px', borderRadius: 10,
+                    background: isCurrActive ? `${C.navy}12` : C.ice,
+                    border: `1px solid ${isCurrActive ? C.navy : C.line}`,
+                    cursor: 'pointer', opacity: hasActivity ? 1 : 0.65,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <CoinIcon currency={c} size={22} />
+                    <div style={{ fontSize: 12, fontWeight: 700, color: C.heading }}>
+                      {CURRENCY_META[c]?.shortName || c}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: 9, color: '#1E9E64', fontWeight: 600 }}>+ {fmtMoney(inc, c)}</div>
+                      <div style={{ fontSize: 9, color: '#B23A34', fontWeight: 600 }}>- {fmtMoney(exp, c)}</div>
+                    </div>
+                    <div style={{ textAlign: 'right', minWidth: 70 }}>
+                      <div style={{
+                        fontFamily: MONO, fontSize: 12.5, fontWeight: 800,
+                        color: net >= 0 ? '#1E9E64' : '#B23A34',
+                      }}>
+                        {net >= 0 ? '+' : ''}{fmtMoney(net, c)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
       {filtered.length === 0 && <div style={{ textAlign: 'center', padding: '40px 0', color: C.muted, fontSize: 13 }}>No entries here yet. Tap + to log your first one.</div>}
       
-      {/* Entries List */}
+      {/* Entries List with prominent Currency & Type clarity */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {filtered.map((e) => {
-          const typeInfo = TYPES.find((t) => t.key === e.type);
+          const typeInfo = TYPES.find((t) => t.key === e.type) || TYPES[0];
           const Icon = typeInfo.icon;
           const rateVal = e.rateAtEntry || settings?.rates?.[e.currency] || 1;
           const pkrVal = Number(e.amount) * rateVal;
+          const currMeta = CURRENCY_META[e.currency] || { shortName: e.currency, name: e.currency, symbol: '' };
+
           return (
             <button
               key={e.id}
@@ -1951,23 +2197,44 @@ function HistoryScreen({ entries, onEdit, settings, initialCurrency, onCurrencyC
               <div
                 className="vlf-entry-icon-wrap"
                 style={{
-                  width: 36, height: 36, borderRadius: 10, background: `${typeInfo.color}14`,
+                  width: 38, height: 38, borderRadius: 10, background: `${typeInfo.color}14`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
                 }}
               >
-                <Icon size={16} color={typeInfo.color} />
+                <Icon size={17} color={typeInfo.color} />
               </div>
+
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.heading, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {e.category || typeInfo.label}{e.note ? ` · ${e.note}` : ''}
+                {/* Clear Currency & Type line */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2, flexWrap: 'wrap' }}>
+                  <span style={{
+                    fontSize: 10, fontWeight: 800, padding: '1px 6px', borderRadius: 6,
+                    background: `${typeInfo.color}18`, color: typeInfo.color, border: `1px solid ${typeInfo.color}33`,
+                  }}>
+                    {currMeta.shortName}
+                  </span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: C.heading }}>
+                    {typeInfo.label} in {e.currency === 'TRY' ? 'TL' : e.currency}
+                  </span>
+                  {e.category && (
+                    <span style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>
+                      · {e.category}
+                    </span>
+                  )}
                 </div>
-                <div style={{ fontSize: 11, color: C.muted }}>{e.date}{e.holdingSource ? ` · ${e.holdingSource}` : ''}</div>
+
+                <div style={{ fontSize: 11, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {e.date}{e.holdingSource ? ` · ${e.holdingSource}` : ''}{e.note ? ` · ${e.note}` : ''}
+                </div>
               </div>
+
               <div style={{ textAlign: 'right', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <div>
-                  <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 600, color: typeInfo.color }}>{fmtMoney(e.amount, e.currency)}</div>
+                  <div style={{ fontFamily: MONO, fontSize: 14.5, fontWeight: 700, color: typeInfo.color }}>
+                    {fmtMoney(e.amount, e.currency)}
+                  </div>
                   {e.currency !== 'PKR' && (
-                    <div style={{ fontFamily: MONO, fontSize: 7.5, color: C.muted, marginTop: 1, letterSpacing: '0.02em' }}>
+                    <div style={{ fontFamily: MONO, fontSize: 8, color: C.muted, marginTop: 1, letterSpacing: '0.02em', fontWeight: 600 }}>
                       ≈ Rs {fmtAmount(pkrVal)}
                     </div>
                   )}
@@ -2219,6 +2486,65 @@ function NetWorthScreen({ entries, settings, onNavigateToHistory }) {
     return map;
   }, [entries, settings.rates]);
 
+  // Exact currency breakdowns for all 5 categories
+  const perCurrencyByType = useMemo(() => {
+    const map = {
+      income: {},
+      saving: {},
+      investment: {},
+      expense: {},
+      unaccounted: {},
+      outflow: {},
+    };
+    CURRENCIES.forEach((c) => {
+      const t = computeTotals(entries, c);
+      map.income[c] = t.income || 0;
+      map.saving[c] = t.saving || 0;
+      map.investment[c] = t.investment || 0;
+      map.expense[c] = t.expense || 0;
+      map.unaccounted[c] = t.unaccounted || 0;
+      map.outflow[c] = (t.expense || 0) + (t.unaccounted || 0);
+    });
+    return map;
+  }, [entries]);
+
+  const renderCurrencyLines = (typeKey, color) => {
+    const activeCurrs = CURRENCIES.filter((c) => (perCurrencyByType[typeKey]?.[c] || 0) > 0);
+    if (activeCurrs.length === 0) return null;
+    return (
+      <div style={{
+        marginTop: 6,
+        paddingTop: 4,
+        borderTop: `1px dashed ${C.line}`,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 2,
+        width: '100%',
+      }}>
+        {activeCurrs.map((c) => {
+          const amt = perCurrencyByType[typeKey][c];
+          const short = c === 'TRY' ? 'TL' : c;
+          const sym = CURRENCY_META[c]?.cleanSymbol || c;
+          return (
+            <div key={c} style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              fontSize: 8.5,
+              fontFamily: MONO,
+              fontWeight: 800,
+              color,
+              lineHeight: 1.15,
+            }}>
+              <span style={{ fontSize: 8, fontWeight: 800, opacity: 0.85 }}>{short}:</span>
+              <span>{sym}{fmtAmount(amt)}</span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
     <div style={{ padding: '20px 16px 100px', fontFamily: SANS }}>
       <div style={{ marginBottom: 16 }}>
@@ -2315,40 +2641,49 @@ function NetWorthScreen({ entries, settings, onNavigateToHistory }) {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-            <div style={{ background: C.ice, borderRadius: 10, padding: '9px 8px', textAlign: 'center', border: `1px solid ${C.line}` }}>
-              <div style={{ fontSize: 9.5, color: C.muted, marginBottom: 2, fontWeight: 600 }}>Total Income</div>
-              <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#1E9E64' }}>
-                {fmtMoney(convertedIncome, display)}
-              </div>
-              {display !== 'PKR' && (
-                <div style={{ fontFamily: MONO, fontSize: 8.5, color: C.muted, marginTop: 2, fontWeight: 600 }}>
-                  ≈ Rs {fmtAmount(totalIncomeBase)}
+            <div style={{ background: C.ice, borderRadius: 10, padding: '9px 8px', textAlign: 'center', border: `1px solid ${C.line}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontSize: 9.5, color: C.muted, marginBottom: 2, fontWeight: 600 }}>Total Income</div>
+                <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#1E9E64' }}>
+                  {fmtMoney(convertedIncome, display)}
                 </div>
-              )}
+                {display !== 'PKR' && (
+                  <div style={{ fontFamily: MONO, fontSize: 8.5, color: C.muted, marginTop: 2, fontWeight: 600 }}>
+                    ≈ Rs {fmtAmount(totalIncomeBase)}
+                  </div>
+                )}
+              </div>
+              {renderCurrencyLines('income', '#1E9E64')}
             </div>
 
-            <div style={{ background: C.ice, borderRadius: 10, padding: '9px 8px', textAlign: 'center', border: `1px solid ${C.line}` }}>
-              <div style={{ fontSize: 9.5, color: C.muted, marginBottom: 2, fontWeight: 600 }}>Pure Savings</div>
-              <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#2E6F6F' }}>
-                {fmtMoney(convertedSavings, display)}
-              </div>
-              {display !== 'PKR' && (
-                <div style={{ fontFamily: MONO, fontSize: 8.5, color: C.muted, marginTop: 2, fontWeight: 600 }}>
-                  ≈ Rs {fmtAmount(totalSavingsBase)}
+            <div style={{ background: C.ice, borderRadius: 10, padding: '9px 8px', textAlign: 'center', border: `1px solid ${C.line}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontSize: 9.5, color: C.muted, marginBottom: 2, fontWeight: 600 }}>Pure Savings</div>
+                <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#2E6F6F' }}>
+                  {fmtMoney(convertedSavings, display)}
                 </div>
-              )}
+                {display !== 'PKR' && (
+                  <div style={{ fontFamily: MONO, fontSize: 8.5, color: C.muted, marginTop: 2, fontWeight: 600 }}>
+                    ≈ Rs {fmtAmount(totalSavingsBase)}
+                  </div>
+                )}
+              </div>
+              {renderCurrencyLines('saving', '#2E6F6F')}
             </div>
 
-            <div style={{ background: C.ice, borderRadius: 10, padding: '9px 8px', textAlign: 'center', border: `1px solid ${C.line}` }}>
-              <div style={{ fontSize: 9.5, color: C.muted, marginBottom: 2, fontWeight: 600 }}>Investments</div>
-              <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#6B5FA8' }}>
-                {fmtMoney(convertedInvestments, display)}
-              </div>
-              {display !== 'PKR' && (
-                <div style={{ fontFamily: MONO, fontSize: 8.5, color: C.muted, marginTop: 2, fontWeight: 600 }}>
-                  ≈ Rs {fmtAmount(totalInvestmentsBase)}
+            <div style={{ background: C.ice, borderRadius: 10, padding: '9px 8px', textAlign: 'center', border: `1px solid ${C.line}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontSize: 9.5, color: C.muted, marginBottom: 2, fontWeight: 600 }}>Investments</div>
+                <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#6B5FA8' }}>
+                  {fmtMoney(convertedInvestments, display)}
                 </div>
-              )}
+                {display !== 'PKR' && (
+                  <div style={{ fontFamily: MONO, fontSize: 8.5, color: C.muted, marginTop: 2, fontWeight: 600 }}>
+                    ≈ Rs {fmtAmount(totalInvestmentsBase)}
+                  </div>
+                )}
+              </div>
+              {renderCurrencyLines('investment', '#6B5FA8')}
             </div>
           </div>
         </div>
@@ -2419,40 +2754,49 @@ function NetWorthScreen({ entries, settings, onNavigateToHistory }) {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-            <div style={{ background: C.ice, borderRadius: 10, padding: '9px 8px', textAlign: 'center', border: `1px solid ${C.line}` }}>
-              <div style={{ fontSize: 9.5, color: C.muted, marginBottom: 2, fontWeight: 600 }}>Expenses Deducted</div>
-              <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#B23A34' }}>
-                {fmtMoney(convertedExpenses, display)}
-              </div>
-              {display !== 'PKR' && (
-                <div style={{ fontFamily: MONO, fontSize: 8.5, color: C.muted, marginTop: 2, fontWeight: 600 }}>
-                  ≈ Rs {fmtAmount(totalExpensesBase)}
+            <div style={{ background: C.ice, borderRadius: 10, padding: '9px 8px', textAlign: 'center', border: `1px solid ${C.line}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontSize: 9.5, color: C.muted, marginBottom: 2, fontWeight: 600 }}>Expenses Deducted</div>
+                <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#B23A34' }}>
+                  {fmtMoney(convertedExpenses, display)}
                 </div>
-              )}
+                {display !== 'PKR' && (
+                  <div style={{ fontFamily: MONO, fontSize: 8.5, color: C.muted, marginTop: 2, fontWeight: 600 }}>
+                    ≈ Rs {fmtAmount(totalExpensesBase)}
+                  </div>
+                )}
+              </div>
+              {renderCurrencyLines('expense', '#B23A34')}
             </div>
 
-            <div style={{ background: C.ice, borderRadius: 10, padding: '9px 8px', textAlign: 'center', border: `1px solid ${C.line}` }}>
-              <div style={{ fontSize: 9.5, color: C.muted, marginBottom: 2, fontWeight: 600 }}>Untracked / Lost</div>
-              <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#D97706' }}>
-                {fmtMoney(convertedUntracked, display)}
-              </div>
-              {display !== 'PKR' && (
-                <div style={{ fontFamily: MONO, fontSize: 8.5, color: C.muted, marginTop: 2, fontWeight: 600 }}>
-                  ≈ Rs {fmtAmount(totalUntrackedBase)}
+            <div style={{ background: C.ice, borderRadius: 10, padding: '9px 8px', textAlign: 'center', border: `1px solid ${C.line}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontSize: 9.5, color: C.muted, marginBottom: 2, fontWeight: 600 }}>Untracked / Lost</div>
+                <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#D97706' }}>
+                  {fmtMoney(convertedUntracked, display)}
                 </div>
-              )}
+                {display !== 'PKR' && (
+                  <div style={{ fontFamily: MONO, fontSize: 8.5, color: C.muted, marginTop: 2, fontWeight: 600 }}>
+                    ≈ Rs {fmtAmount(totalUntrackedBase)}
+                  </div>
+                )}
+              </div>
+              {renderCurrencyLines('unaccounted', '#D97706')}
             </div>
 
-            <div style={{ background: C.ice, borderRadius: 10, padding: '9px 8px', textAlign: 'center', border: `1px solid ${C.line}` }}>
-              <div style={{ fontSize: 9.5, color: C.muted, marginBottom: 2, fontWeight: 600 }}>Total Outflow</div>
-              <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#B23A34' }}>
-                {fmtMoney(convertedOutflow, display)}
-              </div>
-              {display !== 'PKR' && (
-                <div style={{ fontFamily: MONO, fontSize: 8.5, color: C.muted, marginTop: 2, fontWeight: 600 }}>
-                  ≈ Rs {fmtAmount(totalOutflowBase)}
+            <div style={{ background: C.ice, borderRadius: 10, padding: '9px 8px', textAlign: 'center', border: `1px solid ${C.line}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontSize: 9.5, color: C.muted, marginBottom: 2, fontWeight: 600 }}>Total Outflow</div>
+                <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#B23A34' }}>
+                  {fmtMoney(convertedOutflow, display)}
                 </div>
-              )}
+                {display !== 'PKR' && (
+                  <div style={{ fontFamily: MONO, fontSize: 8.5, color: C.muted, marginTop: 2, fontWeight: 600 }}>
+                    ≈ Rs {fmtAmount(totalOutflowBase)}
+                  </div>
+                )}
+              </div>
+              {renderCurrencyLines('outflow', '#B23A34')}
             </div>
           </div>
         </div>
@@ -2627,7 +2971,7 @@ function downloadWorkbook(wb, filename) {
   URL.revokeObjectURL(url);
 }
 
-function ReportScreen({ entries, requestPassword }) {
+function ReportScreen({ entries, reminders = [], requestPassword }) {
   const C = useColors();
   const months = useMemo(() => {
     const set = new Set(entries.map((e) => monthKey(e.date)));
@@ -2649,17 +2993,65 @@ function ReportScreen({ entries, requestPassword }) {
       Date: e.date, Type: e.type.charAt(0).toUpperCase() + e.type.slice(1), Amount: e.amount,
       Currency: e.currency, Category: e.category || '', 'Holding Source': e.holdingSource || '', Note: e.note || '',
     }));
+    const remindersData = (reminders || []).map((r) => ({
+      Title: r.title || 'Untitled',
+      Type: r.type === 'income' ? 'Receivable (Income)' : r.type === 'saving' ? 'Saving Target' : 'Bill / Expense',
+      'Due Date': r.dueDate || 'No Date',
+      'Due Amount': r.amount != null ? r.amount : '',
+      Currency: r.currency || 'PKR',
+      Frequency: r.frequency ? (r.frequency.charAt(0).toUpperCase() + r.frequency.slice(1)) : 'Once',
+      Status: r.completed ? 'Completed' : 'Pending',
+      Note: r.note || '',
+      'Created At': r.createdAt ? r.createdAt.slice(0, 10) : '',
+    }));
+    const allSummaryData = CURRENCIES.map((c) => {
+      const t = computeTotals(entries, c);
+      return {
+        Currency: c,
+        'Total Income': t.income || 0,
+        'Total Expense': t.expense || 0,
+        'Total Saving': t.saving || 0,
+        'Total Investment': t.investment || 0,
+        'Untracked Money': t.unaccounted || 0,
+        'Net Balance': t.net || 0,
+      };
+    }).filter((x) => x['Total Income'] || x['Total Expense'] || x['Total Saving'] || x['Total Investment'] || x['Untracked Money']);
+
+    const wb = XLSX.utils.book_new();
+
+    // Sheet 1: All Entries
     const ws = XLSX.utils.json_to_sheet(rowsData, { header: ['Date', 'Type', 'Amount', 'Currency', 'Category', 'Holding Source', 'Note'] });
     ws['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 20 }, { wch: 30 }];
-    const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'All Entries');
-    downloadWorkbook(wb, 'Vaultify-All-Entries.xlsx');
+
+    // Sheet 2: Reminders & Bills
+    const wsReminders = XLSX.utils.json_to_sheet(remindersData, { header: ['Title', 'Type', 'Due Date', 'Due Amount', 'Currency', 'Frequency', 'Status', 'Note', 'Created At'] });
+    wsReminders['!cols'] = [{ wch: 24 }, { wch: 18 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 28 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, wsReminders, 'Reminders & Bills');
+
+    // Sheet 3: Overall Summary
+    const wsSummary = XLSX.utils.json_to_sheet(allSummaryData, { header: ['Currency', 'Total Income', 'Total Expense', 'Total Saving', 'Total Investment', 'Untracked Money', 'Net Balance'] });
+    wsSummary['!cols'] = [{ wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 18 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Currency Summary');
+
+    downloadWorkbook(wb, 'Vaultify-All-Entries-and-Reminders.xlsx');
   };
 
   const exportMonth = () => {
     const monthEntries = entries.filter((e) => monthKey(e.date) === currentKey).sort((a, b) => (a.date < b.date ? -1 : 1)).map((e) => ({
       Date: e.date, Type: e.type.charAt(0).toUpperCase() + e.type.slice(1), Amount: e.amount,
       Currency: e.currency, Category: e.category || '', 'Holding Source': e.holdingSource || '', Note: e.note || '',
+    }));
+    const remindersData = (reminders || []).map((r) => ({
+      Title: r.title || 'Untitled',
+      Type: r.type === 'income' ? 'Receivable (Income)' : r.type === 'saving' ? 'Saving Target' : 'Bill / Expense',
+      'Due Date': r.dueDate || 'No Date',
+      'Due Amount': r.amount != null ? r.amount : '',
+      Currency: r.currency || 'PKR',
+      Frequency: r.frequency ? (r.frequency.charAt(0).toUpperCase() + r.frequency.slice(1)) : 'Once',
+      Status: r.completed ? 'Completed' : 'Pending',
+      Note: r.note || '',
+      'Created At': r.createdAt ? r.createdAt.slice(0, 10) : '',
     }));
     const summaryData = rows.map((r) => ({
       Currency: r.currency,
@@ -2670,15 +3062,28 @@ function ReportScreen({ entries, requestPassword }) {
       'Untracked Money': r.unaccounted,
       'Net Flow': r.net,
     }));
+
     const wb = XLSX.utils.book_new();
+
+    // Sheet 1: Summary
     const wsSummary = XLSX.utils.json_to_sheet(summaryData, { header: ['Currency', 'Total Income', 'Total Expense', 'Total Saving', 'Total Investment', 'Untracked Money', 'Net Flow'] });
     wsSummary['!cols'] = [{ wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 18 }, { wch: 12 }];
     XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+
+    // Sheet 2: Reminders & Bills
+    const wsReminders = XLSX.utils.json_to_sheet(remindersData, { header: ['Title', 'Type', 'Due Date', 'Due Amount', 'Currency', 'Frequency', 'Status', 'Note', 'Created At'] });
+    wsReminders['!cols'] = [{ wch: 24 }, { wch: 18 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 28 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, wsReminders, 'Reminders & Bills');
+
+    // Sheet 3: Entries
     const wsEntries = XLSX.utils.json_to_sheet(monthEntries, { header: ['Date', 'Type', 'Amount', 'Currency', 'Category', 'Holding Source', 'Note'] });
     wsEntries['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 20 }, { wch: 30 }];
     XLSX.utils.book_append_sheet(wb, wsEntries, 'Entries');
+
     downloadWorkbook(wb, `Vaultify-Report-${currentKey}.xlsx`);
   };
+
+  const pendingRemindersCount = (reminders || []).filter((r) => !r.completed).length;
 
   return (
     <div style={{ padding: '20px 16px 100px', fontFamily: SANS }}>
@@ -2701,7 +3106,7 @@ function ReportScreen({ entries, requestPassword }) {
             <Card key={r.currency} style={{ padding: 14 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
                 <CoinIcon currency={r.currency} size={28} />
-                <div style={{ fontSize: 14, fontWeight: 700, color: C.heading }}>{r.currency}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: C.heading }}>{CURRENCY_META[r.currency]?.name || r.currency}</div>
                 {diff !== null && (
                   <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 700, color: diff > 0 ? '#7A2E2E' : '#39604A' }}>
                     {diff > 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
@@ -2727,13 +3132,24 @@ function ReportScreen({ entries, requestPassword }) {
           );
         })}
       </div>
-      <SectionLabel>Export</SectionLabel>
+
+      <SectionLabel>Export with Reminders (Sheet 2)</SectionLabel>
+      <div style={{
+        background: C.ice, border: `1px solid ${C.line}`, borderRadius: 12, padding: '10px 14px',
+        marginBottom: 12, fontSize: 12, color: C.navySoft, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <Bell size={15} color={C.steel} />
+          <span><strong>Sheet 2 Included:</strong> {(reminders || []).length} total reminders ({pendingRemindersCount} pending)</span>
+        </div>
+      </div>
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <button onClick={() => requestPassword(exportMonth)} style={{ display: 'flex', alignItems: 'center', gap: 10, background: C.navy, color: '#fff', border: 'none', borderRadius: 14, padding: '13px 16px', fontSize: 14, fontWeight: 700 }}>
-          <FileSpreadsheet size={17} /> Export {monthLabel(currentKey)} to Excel
+        <button onClick={() => requestPassword(exportMonth)} style={{ display: 'flex', alignItems: 'center', gap: 10, background: C.navy, color: '#fff', border: 'none', borderRadius: 14, padding: '13px 16px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
+          <FileSpreadsheet size={17} /> Export {monthLabel(currentKey)} + Reminders (Sheet 2)
         </button>
-        <button onClick={() => requestPassword(exportAll)} style={{ display: 'flex', alignItems: 'center', gap: 10, background: C.surface, color: C.navy, border: `1.5px solid ${C.navy}`, borderRadius: 14, padding: '13px 16px', fontSize: 14, fontWeight: 700 }}>
-          <Download size={17} /> Export full history to Excel
+        <button onClick={() => requestPassword(exportAll)} style={{ display: 'flex', alignItems: 'center', gap: 10, background: C.surface, color: C.navy, border: `1.5px solid ${C.navy}`, borderRadius: 14, padding: '13px 16px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
+          <Download size={17} /> Export Full History + Reminders (Sheet 2)
         </button>
       </div>
     </div>
@@ -2842,6 +3258,20 @@ const REMINDER_SUGGESTIONS = [
   'Netflix / Cloud Sub', 'School / College Fee', 'Car Fuel / Maintenance'
 ];
 
+function triggerBrowserNotification(title, body) {
+  if (typeof window === 'undefined' || !('Notification' in window)) return;
+  if (Notification.permission === 'granted') {
+    try {
+      new Notification(title, {
+        body,
+        icon: '/favicon.ico',
+      });
+    } catch (err) {
+      console.warn('Browser notification failed:', err);
+    }
+  }
+}
+
 function ReminderSheet({ open, onClose, onSave, onDelete, onPayAndAdd, settings, initial }) {
   const C = useColors();
   const [title, setTitle] = useState('');
@@ -2852,6 +3282,7 @@ function ReminderSheet({ open, onClose, onSave, onDelete, onPayAndAdd, settings,
   const [frequency, setFrequency] = useState('once');
   const [note, setNote] = useState('');
   const [completed, setCompleted] = useState(false);
+  const [touched, setTouched] = useState(false);
   const titleRef = useRef(null);
 
   useEffect(() => {
@@ -2865,6 +3296,7 @@ function ReminderSheet({ open, onClose, onSave, onDelete, onPayAndAdd, settings,
       setFrequency(initial.frequency || 'once');
       setNote(initial.note || '');
       setCompleted(!!initial.completed);
+      setTouched(false);
     } else {
       setTitle('');
       setType('expense');
@@ -2874,13 +3306,15 @@ function ReminderSheet({ open, onClose, onSave, onDelete, onPayAndAdd, settings,
       setFrequency('once');
       setNote('');
       setCompleted(false);
+      setTouched(false);
     }
     setTimeout(() => titleRef.current?.focus(), 150);
   }, [open, initial, settings?.lastCurrency]);
 
   if (!open) return null;
   const activeTypeObj = REMINDER_TYPES.find((t) => t.key === type) || REMINDER_TYPES[0];
-  const canSave = title.trim().length > 0;
+  const validAmount = amount !== '' && !isNaN(Number(amount)) && Number(amount) > 0;
+  const canSave = title.trim().length > 0 && validAmount;
 
   const setQuickDate = (daysFromNow) => {
     const d = new Date();
@@ -2889,12 +3323,19 @@ function ReminderSheet({ open, onClose, onSave, onDelete, onPayAndAdd, settings,
   };
 
   const handleSave = () => {
+    setTouched(true);
     if (!canSave) return;
+
+    // Ask notification permission if not yet decided
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+
     onSave({
       id: initial?.id || uid(),
       title: title.trim(),
       type,
-      amount: amount && Number(amount) > 0 ? Number(amount) : null,
+      amount: Number(amount),
       currency,
       dueDate,
       frequency,
@@ -2939,7 +3380,7 @@ function ReminderSheet({ open, onClose, onSave, onDelete, onPayAndAdd, settings,
           onChange={(e) => setTitle(e.target.value)}
           placeholder="e.g. Electricity Bill, House Rent, Friend Loan Return…"
           style={{
-            width: '100%', border: `1.5px solid ${C.line}`, borderRadius: 12, padding: '12px 14px',
+            width: '100%', border: `1.5px solid ${touched && !title.trim() ? '#B23A34' : C.line}`, borderRadius: 12, padding: '12px 14px',
             fontSize: 14.5, fontWeight: 600, marginBottom: 10, outline: 'none', color: C.heading,
             background: C.ice, boxSizing: 'border-box', fontFamily: SANS,
           }}
@@ -2990,16 +3431,30 @@ function ReminderSheet({ open, onClose, onSave, onDelete, onPayAndAdd, settings,
           })}
         </div>
 
-        {/* Amount (Optional) */}
-        <SectionLabel>Due Amount (Optional)</SectionLabel>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: C.ice, borderRadius: 14, padding: '10px 14px', marginBottom: 10, border: `1px solid ${C.line}` }}>
+        {/* Amount (Required) */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <SectionLabel style={{ margin: 0, marginBottom: 4 }}>Due Amount (Required) *</SectionLabel>
+          {touched && !validAmount && (
+            <span style={{ fontSize: 10.5, color: '#B23A34', fontWeight: 700 }}>* Please enter amount > 0</span>
+          )}
+        </div>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          background: C.ice,
+          borderRadius: 14,
+          padding: '10px 14px',
+          marginBottom: 10,
+          border: `1.5px solid ${touched && !validAmount ? '#B23A34' : C.line}`,
+        }}>
           <span style={{ fontFamily: SERIF, fontSize: 18, color: activeTypeObj.color, fontWeight: 700 }}>
             {CURRENCY_META[currency]?.symbol || currency}
           </span>
           <input
             type="number"
             inputMode="decimal"
-            placeholder="0.00 (optional)"
+            placeholder="0.00 (required)"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontFamily: MONO, fontSize: 18, fontWeight: 600, color: C.heading }}
@@ -3089,6 +3544,14 @@ function ReminderSheet({ open, onClose, onSave, onDelete, onPayAndAdd, settings,
           }}
         />
 
+        {/* Info reassurance */}
+        <div style={{
+          fontSize: 11, color: C.muted, textAlign: 'center', margin: '4px 0 14px', lineHeight: 1.4,
+          background: C.ice, padding: '8px 12px', borderRadius: 10, border: `1px solid ${C.line}`,
+        }}>
+          💡 <strong>Notice:</strong> Adding a reminder will <em>not</em> deduct or change your current balance. It will only be logged and deducted when you check it as completed or tap "Pay & Log".
+        </div>
+
         {/* Action Buttons */}
         <button
           type="button"
@@ -3171,6 +3634,20 @@ function getReminderStatus(dueDateStr) {
 function RemindersSection({ reminders, onOpenAddReminder, onEditReminder, onToggleReminder, onPayAndLog }) {
   const C = useColors();
   const [tab, setTab] = useState('active');
+  const [notifPerm, setNotifPerm] = useState(typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'denied');
+
+  const handleRequestNotif = async () => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    try {
+      const res = await Notification.requestPermission();
+      setNotifPerm(res);
+      if (res === 'granted') {
+        triggerBrowserNotification('🔔 Vaultify Notifications Enabled', 'You will now receive automatic alerts for due bills and payment reminders!');
+      }
+    } catch (err) {
+      console.warn(err);
+    }
+  };
 
   const activeReminders = useMemo(() => {
     return (reminders || []).filter((r) => !r.completed).sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1));
@@ -3187,6 +3664,24 @@ function RemindersSection({ reminders, onOpenAddReminder, onEditReminder, onTogg
   const dueTodayCount = useMemo(() => {
     return activeReminders.filter((r) => getReminderStatus(r.dueDate).isToday).length;
   }, [activeReminders]);
+
+  // Automated notification trigger on active overdue or due bills
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('Notification' in window) || Notification.permission !== 'granted') return;
+    if (activeReminders.length === 0) return;
+
+    const sessionKey = `vlf_notif_${todayStr()}`;
+    const alreadyNotified = sessionStorage.getItem(sessionKey);
+    if (!alreadyNotified) {
+      if (overdueCount > 0) {
+        triggerBrowserNotification('⚠️ Overdue Bill Alert', `You have ${overdueCount} overdue bill(s) pending payment.`);
+        sessionStorage.setItem(sessionKey, '1');
+      } else if (dueTodayCount > 0) {
+        triggerBrowserNotification('🔔 Bill Due Today', `You have ${dueTodayCount} bill(s) due for payment today.`);
+        sessionStorage.setItem(sessionKey, '1');
+      }
+    }
+  }, [activeReminders, overdueCount, dueTodayCount]);
 
   return (
     <div style={{
@@ -3231,19 +3726,41 @@ function RemindersSection({ reminders, onOpenAddReminder, onEditReminder, onTogg
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={onOpenAddReminder}
-          className="vlf-hover"
-          style={{
-            display: 'flex', alignItems: 'center', gap: 4,
-            background: C.navy, color: '#fff', border: 'none',
-            borderRadius: 10, padding: '7px 12px', fontSize: 12,
-            fontWeight: 700, cursor: 'pointer',
-          }}
-        >
-          <Plus size={13} strokeWidth={2.6} /> Add Reminder
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {typeof window !== 'undefined' && 'Notification' in window && (
+            <button
+              type="button"
+              onClick={handleRequestNotif}
+              className="vlf-hover"
+              title={notifPerm === 'granted' ? 'Browser notifications are active' : 'Click to enable browser notifications for due bills'}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                background: notifPerm === 'granted' ? 'rgba(30,158,100,0.12)' : C.ice,
+                color: notifPerm === 'granted' ? '#1E9E64' : C.muted,
+                border: `1px solid ${notifPerm === 'granted' ? '#1E9E6444' : C.line}`,
+                borderRadius: 10, padding: '6px 9px', fontSize: 11,
+                fontWeight: 700, cursor: 'pointer',
+              }}
+            >
+              <Bell size={12} color={notifPerm === 'granted' ? '#1E9E64' : 'currentColor'} />
+              {notifPerm === 'granted' ? 'Alerts ON' : 'Enable Alerts'}
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={onOpenAddReminder}
+            className="vlf-hover"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              background: C.navy, color: '#fff', border: 'none',
+              borderRadius: 10, padding: '7px 12px', fontSize: 12,
+              fontWeight: 700, cursor: 'pointer',
+            }}
+          >
+            <Plus size={13} strokeWidth={2.6} /> Add
+          </button>
+        </div>
       </div>
 
       {/* Tabs if there are any reminders */}
@@ -4548,7 +5065,7 @@ export default function App() {
                 }}
               />
             )}
-            {screen === 'report' && <ReportScreen entries={entries} requestPassword={requestPassword} />}
+            {screen === 'report' && <ReportScreen entries={entries} reminders={reminders} requestPassword={requestPassword} />}
             {screen === 'calculator' && (
               <CalculatorScreen
                 settings={settings}
