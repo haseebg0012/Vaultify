@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Vaultify</title>
+    <meta name="theme-color" content="#14110D" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Vaultify" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --navy: #14110D;
+        --navy-soft: #241D14;
+        --gold: #B8912E;
+        --gold-soft: #E4C670;
+        --ice: #FAF7EF;
+        --surface: #FFFFFF;
+        --silver: #E3D3A0;
+        --line: #E9DFC4;
+        --muted: #8B7F68;
+      }
+      [data-theme="dark"] {
+        --navy: #E9C766;
+        --navy-soft: #B8912E;
+        --gold: #E9C766;
+        --gold-soft: #E9C766;
+        --ice: #100D08;
+        --surface: #1C160F;
+        --silver: #E3D3A0;
+        --line: rgba(233,199,102,0.16);
+        --muted: #A69A80;
+      }
+      html, body, #root { height: 100%; }
+      body {
+        margin: 0;
+        background: var(--ice);
+        -webkit-tap-highlight-color: transparent;
+        overscroll-behavior-y: none;
+        transition: background .2s ease;
+      }
+      * { box-sizing: border-box; }
+
+      /* subtle premium background texture */
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+        background-image: repeating-linear-gradient(115deg, rgba(20,17,13,0.028) 0px, rgba(20,17,13,0.028) 1px, transparent 1px, transparent 64px);
+      }
+      body:has([data-theme="dark"])::before {
+        background-image: repeating-linear-gradient(115deg, rgba(233,199,102,0.035) 0px, rgba(233,199,102,0.035) 1px, transparent 1px, transparent 64px);
+      }
+
+      .vlf-shell { max-width: 480px; margin: 0 auto; position: relative; min-height: 100vh; z-index: 1; }
+
+      .vlf-card { transition: transform .22s ease, box-shadow .22s ease; }
+      .vlf-card:hover { transform: translateY(-3px); box-shadow: 0 14px 28px rgba(20,17,13,0.12); }
+
+      .vlf-hover { transition: transform .15s ease, opacity .15s ease, box-shadow .15s ease; }
+      .vlf-hover:hover { transform: translateY(-2px); }
+
+      .vlf-bottom-nav {
+        position: fixed; bottom: 0; left: 0; right: 0; z-index: 35;
+        max-width: 480px; margin: 0 auto;
+        background: var(--surface); border-top: 1px solid var(--line);
+        display: flex; padding: 8px 4px calc(env(safe-area-inset-bottom,0px) + 8px);
+        transition: background .2s ease, border-color .2s ease;
+      }
+
+      .vlf-fab { position: fixed; bottom: 84px; right: calc(50% - 240px + 20px); z-index: 40; }
+
+      @media (min-width: 900px) {
+        .vlf-shell {
+          max-width: 1180px;
+          display: grid;
+          grid-template-columns: 232px 1fr;
+          min-height: 100vh;
+        }
+        .vlf-main-col { grid-column: 2; grid-row: 1; }
+        .vlf-bottom-nav {
+          grid-column: 1; grid-row: 1;
+          position: sticky; top: 0; left: auto; right: auto;
+          max-width: 232px; width: 232px; height: 100vh;
+          flex-direction: column; align-items: stretch; justify-content: flex-start;
+          gap: 4px; padding: 28px 14px; border-top: none; border-right: 1px solid var(--line);
+          background: var(--surface);
+        }
+        .vlf-bottom-nav > button {
+          flex-direction: row !important; justify-content: flex-start !important;
+          gap: 12px !important; padding: 11px 13px !important; border-radius: 12px;
+        }
+        .vlf-bottom-nav > button:hover { background: var(--ice); }
+        .vlf-topbar { padding-left: 44px !important; padding-right: 44px !important; }
+        .vlf-main-col > div:not(.vlf-topbar) { padding: 20px 44px 60px !important; max-width: 660px; }
+        .vlf-fab { right: 44px !important; bottom: 44px !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

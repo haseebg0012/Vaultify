@@ -1,0 +1,9 @@
+{
+  "name": "Vaultify",
+  "short_name": "Vaultify",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FAF6EC",
+  "theme_color": "#1A1712",
+  "icons": []
+}
