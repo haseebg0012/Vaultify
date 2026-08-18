@@ -4083,15 +4083,9 @@ function ExchangeSheet({
               </div>
             </div>
 
-            {/* Side-by-Side Currency & Amount Entry with Middle Vertical Divider & Swap Button */}
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr auto 1fr',
-              gap: 12,
-              alignItems: 'stretch',
-              marginBottom: 14,
-            }}>
-              {/* LEFT COLUMN: FROM CURRENCY */}
+            {/* Side-by-Side on Desktop, Stacked on Mobile with Responsive Swap Dividers */}
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] gap-3 sm:gap-3.5 items-stretch mb-3.5">
+              {/* LEFT COLUMN (ON DESKTOP) / TOP (ON MOBILE): FROM CURRENCY */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <SectionLabel style={{ margin: 0 }}>From Currency</SectionLabel>
 
@@ -4102,26 +4096,26 @@ function ExchangeSheet({
                       key={c}
                       active={fromCurr === c}
                       onClick={() => setFromCurr(c)}
-                      style={{ padding: '4px 7px', fontSize: 10.5 }}
+                      style={{ padding: '4px 8px', fontSize: 11 }}
                     >
                       {c}
                     </Chip>
                   ))}
                 </div>
 
-                {/* Quick Amount Suggestion Chips */}
+                {/* Quick Amount Suggestion Chips - Wrapped neatly in 2 lines */}
                 <div>
                   <div style={{ fontSize: 9.5, color: C.muted, fontWeight: 700, textTransform: 'uppercase', marginBottom: 4 }}>
-                    Quick Amounts
+                    Quick Suggestions
                   </div>
-                  <div style={{ display: 'flex', gap: 3.5, overflowX: 'auto', paddingBottom: 2 }}>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                     {QUICK_SUGGESTIONS.map((amt) => (
                       <button
                         key={amt}
                         type="button"
                         onClick={() => setFromAmount(String(amt))}
                         style={{
-                          padding: '2px 5px', borderRadius: 6, fontSize: 9.5, fontWeight: 700,
+                          padding: '3px 8px', borderRadius: 6, fontSize: 10, fontWeight: 700,
                           background: Number(fromAmount) === amt ? `${C.navy}18` : C.ice,
                           border: `1px solid ${Number(fromAmount) === amt ? C.navy : C.line}`,
                           color: Number(fromAmount) === amt ? C.navy : C.muted,
@@ -4158,11 +4152,8 @@ function ExchangeSheet({
                 </div>
               </div>
 
-              {/* CENTER VERTICAL DIVIDER & SWAP BUTTON */}
-              <div style={{
-                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                position: 'relative', width: 14,
-              }}>
+              {/* DESKTOP VERTICAL DIVIDER & HORIZONTAL SWAP BUTTON (⇄) */}
+              <div className="hidden sm:flex flex-col items-center justify-center relative w-4">
                 <div style={{
                   position: 'absolute', top: 0, bottom: 0, width: 1.5, background: C.line,
                 }} />
@@ -4171,7 +4162,7 @@ function ExchangeSheet({
                   onClick={handleSwapCurrencies}
                   title="Swap From & To currencies"
                   style={{
-                    position: 'relative', zIndex: 2, width: 28, height: 28, borderRadius: '50%',
+                    position: 'relative', zIndex: 2, width: 30, height: 30, borderRadius: '50%',
                     background: C.surface, border: `1.5px solid rgba(37,99,235,0.35)`,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     cursor: 'pointer', boxShadow: '0 2px 6px rgba(0,0,0,0.08)',
@@ -4180,11 +4171,31 @@ function ExchangeSheet({
                   onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.15)'; e.currentTarget.style.borderColor = '#2563EB'; }}
                   onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.borderColor = 'rgba(37,99,235,0.35)'; }}
                 >
-                  <ArrowRightLeft size={13} color="#2563EB" />
+                  <ArrowRightLeft size={14} color="#2563EB" />
                 </button>
               </div>
 
-              {/* RIGHT COLUMN: TO CURRENCY */}
+              {/* MOBILE HORIZONTAL DIVIDER & VERTICAL SWAP BUTTON (⇅) */}
+              <div className="flex sm:hidden items-center justify-center relative my-1.5 w-full">
+                <div style={{
+                  position: 'absolute', left: 0, right: 0, height: 1.5, background: C.line,
+                }} />
+                <button
+                  type="button"
+                  onClick={handleSwapCurrencies}
+                  title="Swap From & To currencies"
+                  style={{
+                    position: 'relative', zIndex: 2, width: 32, height: 32, borderRadius: '50%',
+                    background: C.surface, border: `1.5px solid rgba(37,99,235,0.35)`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer', boxShadow: '0 2px 6px rgba(0,0,0,0.08)',
+                  }}
+                >
+                  <ArrowUpDown size={15} color="#2563EB" />
+                </button>
+              </div>
+
+              {/* RIGHT COLUMN (ON DESKTOP) / BOTTOM (ON MOBILE): TO CURRENCY */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <SectionLabel style={{ margin: 0 }}>To Currency</SectionLabel>
 
@@ -4195,26 +4206,26 @@ function ExchangeSheet({
                       key={c}
                       active={toCurr === c}
                       onClick={() => setToCurr(c)}
-                      style={{ padding: '4px 7px', fontSize: 10.5 }}
+                      style={{ padding: '4px 8px', fontSize: 11 }}
                     >
                       {c}
                     </Chip>
                   ))}
                 </div>
 
-                {/* Quick Unit Suggestion Chips */}
+                {/* Quick Unit Suggestion Chips - Wrapped neatly in 2 lines */}
                 <div>
                   <div style={{ fontSize: 9.5, color: C.muted, fontWeight: 700, textTransform: 'uppercase', marginBottom: 4 }}>
                     Quick Suggestions
                   </div>
-                  <div style={{ display: 'flex', gap: 3.5, overflowX: 'auto', paddingBottom: 2 }}>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                     {QUICK_SUGGESTIONS.map((amt) => (
                       <button
                         key={amt}
                         type="button"
                         onClick={() => setToAmount(String(amt))}
                         style={{
-                          padding: '2px 5px', borderRadius: 6, fontSize: 9.5, fontWeight: 700,
+                          padding: '3px 8px', borderRadius: 6, fontSize: 10, fontWeight: 700,
                           background: Number(toAmount) === amt ? 'rgba(37,99,235,0.18)' : C.ice,
                           border: `1px solid ${Number(toAmount) === amt ? '#2563EB' : C.line}`,
                           color: Number(toAmount) === amt ? '#2563EB' : C.muted,
@@ -4506,7 +4517,7 @@ function ExchangeSheet({
                   <div style={{ marginBottom: 10 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                       <SectionLabel style={{ margin: 0 }}>Units to Sell ({activeLot?.toCurrency || 'EUR'}) *</SectionLabel>
-                      <div style={{ display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 2 }}>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                         {QUICK_SUGGESTIONS.map((amt) => (
                           <button
                             key={amt}
