@@ -1435,15 +1435,6 @@ function Dashboard({
         onPayAndLog={onPayAndLogReminder}
       />
 
-      {/* Untracked / Missing Money Section */}
-      <UntrackedMoneySection
-        entries={entries}
-        activeCurrency={activeCurrency}
-        setActiveCurrency={setActiveCurrency}
-        settings={settings}
-        onOpenAddEntry={onOpenAddEntry}
-      />
-
       {/* Compact Spending Limit Widget */}
       {(() => {
         const period = settings.budgetPeriod || settings.budgetLimits?._period || 'week';
@@ -2162,28 +2153,55 @@ function NetWorthScreen({ entries, settings, onNavigateToHistory }) {
   const totalIncomeBase = useMemo(() => {
     return CURRENCIES.reduce((sum, c) => {
       const t = computeTotals(entries, c);
-      return sum + toBase(t.income, c, settings.rates);
+      return sum + toBase(t.income || 0, c, settings.rates);
     }, 0);
   }, [entries, settings.rates]);
   const convertedIncome = fromBase(totalIncomeBase, display, settings.rates);
 
-  // Total expenses & untracked converted
-  const totalExpenseAndUntrackedBase = useMemo(() => {
+  // Total savings and investments converted
+  const totalSavingsBase = useMemo(() => {
     return CURRENCIES.reduce((sum, c) => {
       const t = computeTotals(entries, c);
-      return sum + toBase((t.expense || 0) + (t.unaccounted || 0), c, settings.rates);
+      return sum + toBase(t.saving || 0, c, settings.rates);
     }, 0);
   }, [entries, settings.rates]);
-  const convertedExpensesAndUntracked = fromBase(totalExpenseAndUntrackedBase, display, settings.rates);
+  const convertedSavings = fromBase(totalSavingsBase, display, settings.rates);
 
-  // Total pure savings & investments
-  const totalSavingsAndInvestmentsBase = useMemo(() => {
+  const totalInvestmentsBase = useMemo(() => {
     return CURRENCIES.reduce((sum, c) => {
       const t = computeTotals(entries, c);
-      return sum + toBase((t.saving || 0) + (t.investment || 0), c, settings.rates);
+      return sum + toBase(t.investment || 0, c, settings.rates);
     }, 0);
   }, [entries, settings.rates]);
-  const convertedSavingsAndInvestments = fromBase(totalSavingsAndInvestmentsBase, display, settings.rates);
+  const convertedInvestments = fromBase(totalInvestmentsBase, display, settings.rates);
+
+  // Gross before spend (Income + Savings + Investments)
+  const totalGrossBeforeSpendBase = totalIncomeBase + totalSavingsBase + totalInvestmentsBase;
+  const convertedGrossBeforeSpend = fromBase(totalGrossBeforeSpendBase, display, settings.rates);
+
+  // Expenses & untracked converted
+  const totalExpensesBase = useMemo(() => {
+    return CURRENCIES.reduce((sum, c) => {
+      const t = computeTotals(entries, c);
+      return sum + toBase(t.expense || 0, c, settings.rates);
+    }, 0);
+  }, [entries, settings.rates]);
+  const convertedExpenses = fromBase(totalExpensesBase, display, settings.rates);
+
+  const totalUntrackedBase = useMemo(() => {
+    return CURRENCIES.reduce((sum, c) => {
+      const t = computeTotals(entries, c);
+      return sum + toBase(t.unaccounted || 0, c, settings.rates);
+    }, 0);
+  }, [entries, settings.rates]);
+  const convertedUntracked = fromBase(totalUntrackedBase, display, settings.rates);
+
+  const totalOutflowBase = totalExpensesBase + totalUntrackedBase;
+  const convertedOutflow = fromBase(totalOutflowBase, display, settings.rates);
+
+  // Net After spend (Total Net Worth)
+  const totalNetAfterSpendBase = totalGrossBeforeSpendBase - totalOutflowBase;
+  const convertedNetAfterSpend = fromBase(totalNetAfterSpendBase, display, settings.rates);
 
   const bySource = useMemo(() => {
     const map = {};
@@ -2244,35 +2262,197 @@ function NetWorthScreen({ entries, settings, onNavigateToHistory }) {
         )}
       </div>
 
-      {/* Breakdown Overview Card (Income vs Expenses vs Investments/Savings) */}
-      <div style={{
-        background: C.surface,
-        border: `1px solid ${C.line}`,
-        borderRadius: 16,
-        padding: '14px 16px',
-        marginBottom: 22,
-        boxShadow: '0 2px 8px rgba(20,17,13,0.04)',
-      }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', marginBottom: 10 }}>
-          Converted Overview ({display})
+      {/* 2 Breakout Sections: Before Spend & After Spend */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 24 }}>
+        {/* Section 1: Before Spend (Gross Inflow & Capital) */}
+        <div style={{
+          background: C.surface,
+          border: `1.5px solid ${C.line}`,
+          borderRadius: 18,
+          padding: '16px 18px',
+          boxShadow: '0 2px 10px rgba(20,17,13,0.04)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              <div style={{ width: 28, height: 28, borderRadius: 8, background: 'rgba(30,158,100,0.14)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <TrendingUp size={15} color="#1E9E64" />
+              </div>
+              <span style={{ fontSize: 13.5, fontWeight: 800, color: C.heading }}>
+                1. Before Spend (Total Inflow & Capital)
+              </span>
+            </div>
+            <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 6, background: 'rgba(30,158,100,0.12)', color: '#1E9E64' }}>
+              Gross Assets
+            </span>
+          </div>
+
+          <div style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            padding: '12px 14px',
+            background: C.ice,
+            borderRadius: 12,
+            marginBottom: 12,
+            border: `1px solid ${C.line}`,
+          }}>
+            <div>
+              <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+                Total Gross Capital ({display})
+              </div>
+              <div style={{ fontFamily: MONO, fontSize: 22, fontWeight: 800, color: '#1E9E64', marginTop: 2 }}>
+                {fmtMoney(convertedGrossBeforeSpend, display)}
+              </div>
+            </div>
+            {display !== 'PKR' && (
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 9.5, color: C.muted, fontWeight: 600 }}>Approx PKR</div>
+                <div style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: C.heading }}>
+                  ≈ Rs {fmtAmount(totalGrossBeforeSpendBase)}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+            <div style={{ background: C.ice, borderRadius: 10, padding: '9px 8px', textAlign: 'center', border: `1px solid ${C.line}` }}>
+              <div style={{ fontSize: 9.5, color: C.muted, marginBottom: 2, fontWeight: 600 }}>Total Income</div>
+              <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#1E9E64' }}>
+                {fmtMoney(convertedIncome, display)}
+              </div>
+              {display !== 'PKR' && (
+                <div style={{ fontFamily: MONO, fontSize: 8.5, color: C.muted, marginTop: 2, fontWeight: 600 }}>
+                  ≈ Rs {fmtAmount(totalIncomeBase)}
+                </div>
+              )}
+            </div>
+
+            <div style={{ background: C.ice, borderRadius: 10, padding: '9px 8px', textAlign: 'center', border: `1px solid ${C.line}` }}>
+              <div style={{ fontSize: 9.5, color: C.muted, marginBottom: 2, fontWeight: 600 }}>Pure Savings</div>
+              <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#2E6F6F' }}>
+                {fmtMoney(convertedSavings, display)}
+              </div>
+              {display !== 'PKR' && (
+                <div style={{ fontFamily: MONO, fontSize: 8.5, color: C.muted, marginTop: 2, fontWeight: 600 }}>
+                  ≈ Rs {fmtAmount(totalSavingsBase)}
+                </div>
+              )}
+            </div>
+
+            <div style={{ background: C.ice, borderRadius: 10, padding: '9px 8px', textAlign: 'center', border: `1px solid ${C.line}` }}>
+              <div style={{ fontSize: 9.5, color: C.muted, marginBottom: 2, fontWeight: 600 }}>Investments</div>
+              <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#6B5FA8' }}>
+                {fmtMoney(convertedInvestments, display)}
+              </div>
+              {display !== 'PKR' && (
+                <div style={{ fontFamily: MONO, fontSize: 8.5, color: C.muted, marginTop: 2, fontWeight: 600 }}>
+                  ≈ Rs {fmtAmount(totalInvestmentsBase)}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-          <div style={{ background: C.ice, borderRadius: 10, padding: '10px 8px', textAlign: 'center' }}>
-            <div style={{ fontSize: 10, color: C.muted, marginBottom: 2 }}>Total Income</div>
-            <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#1E9E64' }}>
-              {fmtMoney(convertedIncome, display)}
+
+        {/* Section 2: After Spend (Net Available Wealth & Outflow) */}
+        <div style={{
+          background: C.surface,
+          border: `1.5px solid ${C.line}`,
+          borderRadius: 18,
+          padding: '16px 18px',
+          boxShadow: '0 2px 10px rgba(20,17,13,0.04)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              <div style={{ width: 28, height: 28, borderRadius: 8, background: 'rgba(178,58,52,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Wallet size={15} color={convertedNetAfterSpend >= 0 ? C.navy : '#B23A34'} />
+              </div>
+              <span style={{ fontSize: 13.5, fontWeight: 800, color: C.heading }}>
+                2. After Spend (Net Available Wealth)
+              </span>
             </div>
+            <span style={{
+              fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 6,
+              background: convertedNetAfterSpend >= 0 ? 'rgba(30,158,100,0.12)' : 'rgba(178,58,52,0.12)',
+              color: convertedNetAfterSpend >= 0 ? '#1E9E64' : '#B23A34',
+            }}>
+              Net Remaining
+            </span>
           </div>
-          <div style={{ background: C.ice, borderRadius: 10, padding: '10px 8px', textAlign: 'center' }}>
-            <div style={{ fontSize: 10, color: C.muted, marginBottom: 2 }}>Spent/Untracked</div>
-            <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#B23A34' }}>
-              {fmtMoney(convertedExpensesAndUntracked, display)}
+
+          <div style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            padding: '12px 14px',
+            background: C.ice,
+            borderRadius: 12,
+            marginBottom: 12,
+            border: `1px solid ${C.line}`,
+          }}>
+            <div>
+              <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+                Net Balance After All Deductions ({display})
+              </div>
+              <div style={{
+                fontFamily: MONO,
+                fontSize: 22,
+                fontWeight: 800,
+                color: convertedNetAfterSpend >= 0 ? '#1E9E64' : '#B23A34',
+                marginTop: 2,
+              }}>
+                {fmtMoney(convertedNetAfterSpend, display)}
+              </div>
             </div>
+            {display !== 'PKR' && (
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 9.5, color: C.muted, fontWeight: 600 }}>Approx PKR</div>
+                <div style={{
+                  fontFamily: MONO,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: totalNetAfterSpendBase >= 0 ? '#1E9E64' : '#B23A34',
+                }}>
+                  ≈ Rs {fmtAmount(totalNetAfterSpendBase)}
+                </div>
+              </div>
+            )}
           </div>
-          <div style={{ background: C.ice, borderRadius: 10, padding: '10px 8px', textAlign: 'center' }}>
-            <div style={{ fontSize: 10, color: C.muted, marginBottom: 2 }}>Saved & Invested</div>
-            <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#6B5FA8' }}>
-              {fmtMoney(convertedSavingsAndInvestments, display)}
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+            <div style={{ background: C.ice, borderRadius: 10, padding: '9px 8px', textAlign: 'center', border: `1px solid ${C.line}` }}>
+              <div style={{ fontSize: 9.5, color: C.muted, marginBottom: 2, fontWeight: 600 }}>Expenses Deducted</div>
+              <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#B23A34' }}>
+                {fmtMoney(convertedExpenses, display)}
+              </div>
+              {display !== 'PKR' && (
+                <div style={{ fontFamily: MONO, fontSize: 8.5, color: C.muted, marginTop: 2, fontWeight: 600 }}>
+                  ≈ Rs {fmtAmount(totalExpensesBase)}
+                </div>
+              )}
+            </div>
+
+            <div style={{ background: C.ice, borderRadius: 10, padding: '9px 8px', textAlign: 'center', border: `1px solid ${C.line}` }}>
+              <div style={{ fontSize: 9.5, color: C.muted, marginBottom: 2, fontWeight: 600 }}>Untracked / Lost</div>
+              <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#D97706' }}>
+                {fmtMoney(convertedUntracked, display)}
+              </div>
+              {display !== 'PKR' && (
+                <div style={{ fontFamily: MONO, fontSize: 8.5, color: C.muted, marginTop: 2, fontWeight: 600 }}>
+                  ≈ Rs {fmtAmount(totalUntrackedBase)}
+                </div>
+              )}
+            </div>
+
+            <div style={{ background: C.ice, borderRadius: 10, padding: '9px 8px', textAlign: 'center', border: `1px solid ${C.line}` }}>
+              <div style={{ fontSize: 9.5, color: C.muted, marginBottom: 2, fontWeight: 600 }}>Total Outflow</div>
+              <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 800, color: '#B23A34' }}>
+                {fmtMoney(convertedOutflow, display)}
+              </div>
+              {display !== 'PKR' && (
+                <div style={{ fontFamily: MONO, fontSize: 8.5, color: C.muted, marginTop: 2, fontWeight: 600 }}>
+                  ≈ Rs {fmtAmount(totalOutflowBase)}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -2606,7 +2786,7 @@ function ProfileMenu({ onOpenSettings, onSignOut }) {
 /* Add FAB menu — toggled by the + button, choose Add entry / Reminder / Calc */
 /* ------------------------------------------------------------------ */
 
-function FabMenu({ open, onClose, onAddEntry, onAddReminder, onCalculator }) {
+function FabMenu({ open, onClose, onAddEntry, onAddReminder, onAddUntracked, onCalculator }) {
   const C = useColors();
   if (!open) return null;
   return (
@@ -2614,7 +2794,7 @@ function FabMenu({ open, onClose, onAddEntry, onAddReminder, onCalculator }) {
       <div style={{ position: 'fixed', inset: 0, zIndex: 38 }} onClick={onClose} />
       <div className="vlf-add-menu" style={{
         display: 'flex', flexDirection: 'column', gap: 6, background: C.surface, border: `1px solid ${C.line}`,
-        borderRadius: 16, padding: 8, boxShadow: '0 14px 34px rgba(0,0,0,0.35)', minWidth: 205,
+        borderRadius: 16, padding: 8, boxShadow: '0 14px 34px rgba(0,0,0,0.35)', minWidth: 215,
       }}>
         <button onClick={() => { onClose(); onAddEntry(); }} className="vlf-hover" style={{
           display: 'flex', alignItems: 'center', gap: 10, padding: '11px 12px', borderRadius: 11, border: 'none',
@@ -2627,6 +2807,12 @@ function FabMenu({ open, onClose, onAddEntry, onAddReminder, onCalculator }) {
           background: 'none', color: C.heading, fontSize: 14, fontWeight: 700, textAlign: 'left', cursor: 'pointer',
         }}>
           <Bell size={16} color="#D97706" /> Add reminder
+        </button>
+        <button onClick={() => { onClose(); onAddUntracked(); }} className="vlf-hover" style={{
+          display: 'flex', alignItems: 'center', gap: 10, padding: '11px 12px', borderRadius: 11, border: 'none',
+          background: 'none', color: C.heading, fontSize: 14, fontWeight: 700, textAlign: 'left', cursor: 'pointer',
+        }}>
+          <AlertTriangle size={16} color="#D97706" /> Untracked money
         </button>
         <button onClick={() => { onClose(); onCalculator(); }} className="vlf-hover" style={{
           display: 'flex', alignItems: 'center', gap: 10, padding: '11px 12px', borderRadius: 11, border: 'none',
@@ -4297,6 +4483,18 @@ export default function App() {
             onClose={() => setAddMenuOpen(false)}
             onAddEntry={() => { setEditingEntry(null); setSheetOpen(true); }}
             onAddReminder={() => { setEditingReminder(null); setReminderSheetOpen(true); }}
+            onAddUntracked={() => {
+              setEditingEntry({
+                type: 'unaccounted',
+                amount: '',
+                currency: activeCurrency || 'PKR',
+                category: 'Forgotten / Unknown',
+                holdingSource: 'Cash in Hand',
+                note: '',
+                date: todayStr(),
+              });
+              setSheetOpen(true);
+            }}
             onCalculator={() => setScreen('calculator')}
           />
 
