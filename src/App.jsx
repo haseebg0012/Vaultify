@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Plus, X, TrendingUp, TrendingDown, PiggyBank, Receipt, ChevronRight,
-  ChevronLeft, Settings, Download, Home, History as HistoryIcon,
+  ChevronLeft, ChevronDown, Settings, Download, Home, History as HistoryIcon,
   Landmark, FileSpreadsheet, Check, Banknote, RefreshCw, LogOut, ShieldCheck,
   Wallet, UserCircle, Sun, Moon, KeyRound, Mail, Calculator as CalculatorIcon,
   ArrowRightLeft, Copy, CheckCheck, ArrowUpDown, AlertTriangle, ExternalLink,
   HelpCircle, Search, Bell, Calendar, Clock, CheckCircle2, ListTodo, Trash2,
+  Camera, RotateCcw, Trash, Layers, Eye, EyeOff, Image, UserPlus, Upload,
+  Sliders, Undo2, Sparkles, FolderPlus,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from './supabaseClient';
@@ -39,6 +41,14 @@ const TYPES = [
   { key: 'unaccounted', label: 'Untracked', shortLabel: 'Untracked', icon: HelpCircle, color: '#D97706' },
 ];
 const DEFAULT_RATES = { PKR: 1, USD: 280, EUR: 305, GBP: 355, TRY: 8.7, USDT: 280 };
+const DEFAULT_PROFILES = [
+  {
+    id: 'default',
+    name: 'Personal Vault',
+    avatar: null,
+    enabledCurrencies: ['PKR', 'TRY', 'USD', 'EUR', 'GBP', 'USDT'],
+  },
+];
 const DEFAULT_SETTINGS = {
   lastCurrency: 'PKR', displayCurrency: 'PKR', budgetLimits: {}, budgetPeriod: 'week',
   rates: DEFAULT_RATES, ratesFetchedAt: null, theme: 'light',
@@ -355,11 +365,14 @@ function AuthScreen() {
 /* Entry Sheet                                                        */
 /* ------------------------------------------------------------------ */
 
-function EntrySheet({ open, onClose, onSave, onDelete, settings, initial, saving }) {
+function EntrySheet({ open, onClose, onSave, onDelete, settings, initial, saving, currencies = CURRENCIES }) {
   const C = useColors();
   const [type, setType] = useState('expense');
   const [amount, setAmount] = useState('');
-  const [currency, setCurrency] = useState(settings.lastCurrency || 'PKR');
+  const [currency, setCurrency] = useState(() => {
+    const last = settings.lastCurrency || 'PKR';
+    return (currencies && currencies.includes(last)) ? last : (currencies?.[0] || 'PKR');
+  });
   const [category, setCategory] = useState('');
   const [holdingSource, setHoldingSource] = useState('');
   const [note, setNote] = useState('');
@@ -368,16 +381,19 @@ function EntrySheet({ open, onClose, onSave, onDelete, settings, initial, saving
 
   useEffect(() => {
     if (!open) return;
+    const defaultCurr = (currencies && currencies.includes(settings.lastCurrency)) ? settings.lastCurrency : (currencies?.[0] || 'PKR');
     if (initial) {
-      setType(initial.type); setAmount(String(initial.amount)); setCurrency(initial.currency);
+      setType(initial.type); setAmount(String(initial.amount));
+      setCurrency(currencies.includes(initial.currency) ? initial.currency : defaultCurr);
       setCategory(initial.category || ''); setHoldingSource(initial.holdingSource || '');
       setNote(initial.note || ''); setDate(initial.date);
     } else {
-      setType('expense'); setAmount(''); setCurrency(settings.lastCurrency || 'PKR');
+      setType('expense'); setAmount('');
+      setCurrency(defaultCurr);
       setCategory(''); setHoldingSource(''); setNote(''); setDate(todayStr());
     }
     setTimeout(() => amountRef.current?.focus(), 150);
-  }, [open, initial]);
+  }, [open, initial, currencies]);
 
   useEffect(() => {
     if (category && !(CATEGORY_MAP[type] || []).includes(category)) setCategory('');
@@ -435,7 +451,7 @@ function EntrySheet({ open, onClose, onSave, onDelete, settings, initial, saving
 
         <SectionLabel>Currency</SectionLabel>
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, overflowX: 'auto', paddingBottom: 2 }}>
-          {CURRENCIES.map((c) => (
+          {currencies.map((c) => (
             <Chip key={c} active={currency === c} onClick={() => setCurrency(c)}>
               {CURRENCY_META[c]?.shortName || c}
             </Chip>
@@ -564,26 +580,140 @@ function PasswordGate({ open, onClose, onConfirm, userEmail }) {
 /* Settings Sheet                                                     */
 /* ------------------------------------------------------------------ */
 
-function SettingsSheet({ open, onClose, settings, onSave, onSignOut, ratesLoading, onRefreshRates, theme, onThemeChange, userEmail, entries, onClearMonth, onClearAll }) {
+function SettingsSheet({
+  open,
+  onClose,
+  settings,
+  onSave,
+  onSignOut,
+  ratesLoading,
+  onRefreshRates,
+  theme,
+  onThemeChange,
+  userEmail,
+  entries,
+  onClearMonth,
+  onClearAll,
+  profile,
+  profiles = [],
+  onUpdateProfile,
+  onCreateProfile,
+  onDeleteProfile,
+  onSwitchProfile,
+  trashEntries = [],
+  onRestoreTrash,
+  onDeleteTrashPermanent,
+  onEmptyTrash,
+  initialTab = 'workspace',
+}) {
   const C = useColors();
+  const [activeTab, setActiveTab] = useState(initialTab || 'workspace');
   const [limits, setLimits] = useState({});
   const [budgetPeriod, setBudgetPeriod] = useState(settings.budgetPeriod || 'week');
   const [newPw, setNewPw] = useState('');
   const [confirmPw, setConfirmPw] = useState('');
   const [pwStatus, setPwStatus] = useState('');
   const [pwSaving, setPwSaving] = useState(false);
+
+  // Profile & Workspace state
+  const [profileName, setProfileName] = useState(profile?.name || 'Personal Vault');
+  const [enabledCurrencies, setEnabledCurrencies] = useState(profile?.enabledCurrencies || CURRENCIES);
+  const [newWorkspaceName, setNewWorkspaceName] = useState('');
+  const [showAddWorkspace, setShowAddWorkspace] = useState(false);
+  const fileInputRef = useRef(null);
+
   useEffect(() => {
     if (open) {
       setLimits({ ...settings.budgetLimits });
       setBudgetPeriod(settings.budgetPeriod || settings.budgetLimits?._period || 'week');
       setNewPw(''); setConfirmPw(''); setPwStatus('');
+      setProfileName(profile?.name || 'Personal Vault');
+      setEnabledCurrencies(profile?.enabledCurrencies || CURRENCIES);
+      setShowAddWorkspace(false);
+      setNewWorkspaceName('');
+      if (initialTab) setActiveTab(initialTab);
     }
-  }, [open, settings]);
+  }, [open, settings, profile, initialTab]);
+
   const months = useMemo(() => {
     const set = new Set((entries || []).map((e) => monthKey(e.date)));
     return Array.from(set).sort().reverse();
   }, [entries]);
+
+  // Filter trash to only entries deleted in the last 3 days
+  const validTrashEntries = useMemo(() => {
+    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    return (trashEntries || []).filter((e) => {
+      const delTime = e.deletedAtMs || (e.deletedAt ? new Date(e.deletedAt).getTime() : now);
+      return now - delTime <= THREE_DAYS_MS;
+    }).sort((a, b) => {
+      const timeA = a.deletedAtMs || (a.deletedAt ? new Date(a.deletedAt).getTime() : 0);
+      const timeB = b.deletedAtMs || (b.deletedAt ? new Date(b.deletedAt).getTime() : 0);
+      return timeB - timeA;
+    });
+  }, [trashEntries]);
+
   if (!open) return null;
+
+  const handleAvatarUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Please select an image smaller than 5MB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result;
+      if (base64 && onUpdateProfile) {
+        onUpdateProfile({ ...profile, avatar: base64 });
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveAvatar = () => {
+    if (onUpdateProfile) {
+      onUpdateProfile({ ...profile, avatar: null });
+    }
+  };
+
+  const handleToggleCurrency = (c) => {
+    let next;
+    if (enabledCurrencies.includes(c)) {
+      if (enabledCurrencies.length <= 1) {
+        alert('You must keep at least one currency enabled.');
+        return;
+      }
+      next = enabledCurrencies.filter((x) => x !== c);
+    } else {
+      next = [...enabledCurrencies, c];
+    }
+    setEnabledCurrencies(next);
+    if (onUpdateProfile) {
+      onUpdateProfile({ ...profile, enabledCurrencies: next });
+    }
+  };
+
+  const handleSaveProfileName = () => {
+    const clean = profileName.trim();
+    if (!clean) return;
+    if (onUpdateProfile) {
+      onUpdateProfile({ ...profile, name: clean });
+    }
+  };
+
+  const handleCreateWorkspaceSubmit = (e) => {
+    e.preventDefault();
+    const name = newWorkspaceName.trim();
+    if (!name) return;
+    if (onCreateProfile) {
+      onCreateProfile(name);
+    }
+    setNewWorkspaceName('');
+    setShowAddWorkspace(false);
+  };
 
   const updatePassword = async () => {
     setPwStatus('');
@@ -596,135 +726,547 @@ function SettingsSheet({ open, onClose, settings, onSave, onSignOut, ratesLoadin
     else { setPwStatus('Password updated.'); setNewPw(''); setConfirmPw(''); }
   };
 
+  const tabs = [
+    { id: 'workspace', label: 'Workspace & Currencies', icon: Sliders },
+    { id: 'profile', label: 'Profile Photo', icon: Camera },
+    { id: 'trash', label: `Trash (${validTrashEntries.length})`, icon: Trash2 },
+    { id: 'general', label: 'General & Limits', icon: Settings },
+  ];
+
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'flex-end', background: 'rgba(26,23,18,0.5)' }} onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} style={{
-        background: C.surface, width: '100%', maxWidth: 480, margin: '0 auto', borderRadius: '24px 24px 0 0',
-        maxHeight: '90vh', overflowY: 'auto', padding: '18px 18px 28px', fontFamily: SANS,
+        background: C.surface, width: '100%', maxWidth: 500, margin: '0 auto', borderRadius: '24px 24px 0 0',
+        maxHeight: '92vh', overflowY: 'auto', padding: '18px 18px 32px', fontFamily: SANS,
+        boxShadow: '0 -10px 34px rgba(26,23,18,0.28)',
       }}>
         <div style={{ width: 40, height: 4, background: C.line, borderRadius: 2, margin: '0 auto 16px' }} />
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-          <h2 style={{ fontFamily: SERIF, fontSize: 21, color: C.heading, margin: 0, fontWeight: 600 }}>Settings</h2>
-          <button onClick={onClose} style={{ background: C.ice, border: 'none', borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        
+        {/* Modal Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <h2 style={{ fontFamily: SERIF, fontSize: 21, color: C.heading, margin: 0, fontWeight: 700 }}>Settings</h2>
+            {profile && (
+              <span style={{ fontSize: 11, fontWeight: 800, padding: '3px 8px', borderRadius: 6, background: `${C.navy}14`, color: C.navy }}>
+                {profile.name}
+              </span>
+            )}
+          </div>
+          <button onClick={onClose} style={{ background: C.ice, border: 'none', borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
             <X size={16} color={C.heading} />
           </button>
         </div>
 
-        {userEmail && <p style={{ fontSize: 12, color: C.muted, marginTop: -8, marginBottom: 18 }}>Signed in as {userEmail}</p>}
+        {userEmail && <p style={{ fontSize: 12, color: C.muted, marginTop: -6, marginBottom: 14 }}>Account: {userEmail}</p>}
 
-        <SectionLabel>Appearance</SectionLabel>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-          {[{ k: 'light', l: 'Light', Icon: Sun }, { k: 'dark', l: 'Dark', Icon: Moon }].map(({ k, l, Icon }) => (
-            <button key={k} onClick={() => onThemeChange(k)} style={{
-              flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '11px 0',
-              borderRadius: 12, border: `1.5px solid ${theme === k ? C.navy : C.line}`, background: theme === k ? `${C.navy}12` : C.surface,
-              color: theme === k ? C.navy : C.muted, fontSize: 13, fontWeight: 700,
-            }}>
-              <Icon size={15} /> {l}
-            </button>
-          ))}
+        {/* Tab Navigation Pill Bar */}
+        <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 6, marginBottom: 18 }}>
+          {tabs.map((t) => {
+            const Icon = t.icon;
+            const active = activeTab === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setActiveTab(t.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderRadius: 12,
+                  border: `1.5px solid ${active ? C.navy : C.line}`,
+                  background: active ? C.navy : C.surface,
+                  color: active ? '#fff' : C.navySoft,
+                  fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer',
+                  transition: 'all .15s ease',
+                }}
+              >
+                <Icon size={14} color={active ? '#fff' : C.muted} />
+                <span>{t.label}</span>
+              </button>
+            );
+          })}
         </div>
 
-        <SectionLabel>Spending & Expense Limits</SectionLabel>
-        <p style={{ fontSize: 12, color: C.muted, marginTop: -4, marginBottom: 10 }}>
-          Set limits to alert you when expenses cross your budget. Ideal for weekly or per-hour earnings.
-        </p>
+        {/* ============================================================ */}
+        {/* TAB 1: WORKSPACE & CURRENCIES ON/OFF TOGGLE                  */}
+        {/* ============================================================ */}
+        {activeTab === 'workspace' && (
+          <div>
+            <SectionLabel right={
+              <button
+                onClick={() => setShowAddWorkspace((v) => !v)}
+                style={{ background: 'none', border: 'none', color: C.steel, fontSize: 12, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
+              >
+                <FolderPlus size={13} /> {showAddWorkspace ? 'Cancel' : '+ New Workspace'}
+              </button>
+            }>Workspaces & Profiles</SectionLabel>
+            
+            <p style={{ fontSize: 12, color: C.muted, marginTop: -4, marginBottom: 12, lineHeight: 1.45 }}>
+              Each workspace maintains its own enabled currencies and customized setup.
+            </p>
 
-        {/* Limit Period Selector */}
-        <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
-          {[
-            { k: 'week', l: 'Weekly' },
-            { k: 'month', l: 'Monthly' },
-            { k: 'total', l: 'All time' },
-          ].map((p) => (
-            <button
-              key={p.k}
-              type="button"
-              onClick={() => setBudgetPeriod(p.k)}
-              style={{
-                flex: 1, padding: '8px 4px', borderRadius: 10, fontSize: 12, fontWeight: 700,
-                border: `1.5px solid ${budgetPeriod === p.k ? C.navy : C.line}`,
-                background: budgetPeriod === p.k ? `${C.navy}14` : C.surface,
-                color: budgetPeriod === p.k ? C.navy : C.muted,
-                cursor: 'pointer',
-              }}
-            >
-              {p.l}
-            </button>
-          ))}
-        </div>
+            {/* Create New Workspace Form */}
+            {showAddWorkspace && (
+              <form onSubmit={handleCreateWorkspaceSubmit} style={{ background: C.ice, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 800, color: C.heading, marginBottom: 8 }}>
+                  Create New Workspace
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Business, Crypto, Travel"
+                    value={newWorkspaceName}
+                    onChange={(e) => setNewWorkspaceName(e.target.value)}
+                    style={{ flex: 1, border: `1px solid ${C.line}`, borderRadius: 10, padding: '9px 12px', fontSize: 13, background: C.surface, color: C.navySoft, outline: 'none' }}
+                  />
+                  <button type="submit" style={{ padding: '9px 16px', borderRadius: 10, border: 'none', background: C.navy, color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                    Create
+                  </button>
+                </div>
+              </form>
+            )}
 
-        {CURRENCIES.map((c) => (
-          <div key={c} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <div style={{ width: 48, fontSize: 13, fontWeight: 700, color: C.navySoft }}>{c}</div>
-            <input
-              type="number"
-              inputMode="decimal"
-              placeholder={`No ${budgetPeriod === 'week' ? 'weekly' : budgetPeriod === 'month' ? 'monthly' : 'total'} limit`}
-              value={limits[c] ?? ''}
-              onChange={(e) => setLimits((p) => ({ ...p, [c]: e.target.value }))}
-              style={{
-                flex: 1, border: `1px solid ${C.line}`, borderRadius: 10, padding: '9px 12px',
-                fontSize: 13, outline: 'none', background: C.surface, color: C.navySoft,
-              }}
-            />
-          </div>
-        ))}
+            {/* Workspace list */}
+            {profiles && profiles.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
+                {profiles.map((p) => {
+                  const isActive = p.id === profile?.id;
+                  return (
+                    <div
+                      key={p.id}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '10px 14px', borderRadius: 14,
+                        border: `1.5px solid ${isActive ? C.navy : C.line}`,
+                        background: isActive ? `${C.navy}0B` : C.surface,
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+                        <div style={{
+                          width: 34, height: 34, borderRadius: '50%', overflow: 'hidden',
+                          background: `linear-gradient(135deg, ${C.navy}, ${C.navySoft})`,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          color: '#fff', fontSize: 13, fontWeight: 800, flexShrink: 0,
+                          border: `1px solid ${C.silver}`,
+                        }}>
+                          {p.avatar ? <img src={p.avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : p.name.charAt(0)}
+                        </div>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ fontSize: 13.5, fontWeight: 800, color: C.heading, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+                            {isActive && (
+                              <span style={{ fontSize: 9.5, fontWeight: 800, padding: '1px 5px', borderRadius: 4, background: '#1E9E64', color: '#fff' }}>
+                                Active
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: 11, color: C.muted }}>
+                            {(p.enabledCurrencies || CURRENCIES).length} active currencies: {(p.enabledCurrencies || CURRENCIES).join(', ')}
+                          </div>
+                        </div>
+                      </div>
 
-        <div style={{ height: 6 }} />
-        <SectionLabel right={
-          <button onClick={onRefreshRates} disabled={ratesLoading} style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', color: C.steel, fontSize: 12, fontWeight: 700 }}>
-            <RefreshCw size={12} style={{ animation: ratesLoading ? 'vlfSpin 1s linear infinite' : 'none' }} /> Refresh
-          </button>
-        }>Live exchange rates</SectionLabel>
-        <p style={{ fontSize: 12, color: C.muted, marginTop: -4, marginBottom: 4 }}>PKR value of 1 unit — used to convert your Net Worth total.</p>
-        <p style={{ fontSize: 11.5, color: C.muted, marginBottom: 12 }}>Last updated: {timeAgo(settings.ratesFetchedAt)}</p>
-        {CURRENCIES.filter((c) => c !== 'PKR').map((c) => (
-          <div key={c} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-            <div style={{ width: 48, fontSize: 13, fontWeight: 700, color: C.navySoft }}>{c}</div>
-            <div style={{ flex: 1, padding: '9px 12px', fontSize: 13, color: C.navySoft, background: C.ice, borderRadius: 10, fontFamily: MONO }}>
-              {settings.rates[c] ? fmtAmount(settings.rates[c]) : '—'}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                        {!isActive ? (
+                          <button
+                            type="button"
+                            onClick={() => onSwitchProfile && onSwitchProfile(p.id)}
+                            style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid ${C.line}`, background: C.surface, color: C.navy, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                          >
+                            Switch
+                          </button>
+                        ) : null}
+                        {profiles.length > 1 && !isActive && onDeleteProfile && (
+                          <button
+                            type="button"
+                            onClick={() => onDeleteProfile(p.id)}
+                            title="Delete workspace"
+                            style={{ padding: '6px 8px', borderRadius: 8, border: '1px solid #B23A3433', background: 'none', color: '#B23A34', cursor: 'pointer' }}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <Divider />
+
+            {/* CURRENCY ON/OFF TOGGLE MANAGER */}
+            <SectionLabel>Workspace Currency Manager (Home & System)</SectionLabel>
+            <p style={{ fontSize: 12, color: C.muted, marginTop: -4, marginBottom: 14, lineHeight: 1.45 }}>
+              Turn currencies ON or OFF for <strong>{profile?.name || 'this workspace'}</strong>. Disabled currencies will be completely hidden from the home dashboard, entry sheets, currency converter, and net worth calculations.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 9, marginBottom: 20 }}>
+              {CURRENCIES.map((c) => {
+                const meta = CURRENCY_META[c] || {};
+                const isEnabled = enabledCurrencies.includes(c);
+                return (
+                  <div
+                    key={c}
+                    onClick={() => handleToggleCurrency(c)}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '11px 14px', borderRadius: 14,
+                      border: `1.5px solid ${isEnabled ? (meta.color || C.navy) : C.line}`,
+                      background: isEnabled ? `${C.navy}08` : `${C.ice}aa`,
+                      cursor: 'pointer', transition: 'all .15s ease',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+                      <CoinIcon currency={c} size={32} />
+                      <div>
+                        <div style={{ fontSize: 13.5, fontWeight: 800, color: isEnabled ? C.heading : C.muted, display: 'flex', alignItems: 'center', gap: 5 }}>
+                          <span>{meta.name || c}</span>
+                          <span style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>({meta.cleanSymbol})</span>
+                        </div>
+                        <div style={{ fontSize: 10.5, color: isEnabled ? C.steel : C.muted, fontWeight: 600 }}>
+                          {isEnabled ? '● Active in workspace & dashboard' : '○ Hidden / Turned Off'}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Interactive Switch Toggle */}
+                    <div style={{
+                      width: 44, height: 24, borderRadius: 12,
+                      background: isEnabled ? C.navy : C.line,
+                      position: 'relative', transition: 'background .2s ease', flexShrink: 0,
+                    }}>
+                      <div style={{
+                        width: 18, height: 18, borderRadius: '50%', background: '#fff',
+                        position: 'absolute', top: 3,
+                        left: isEnabled ? 23 : 3,
+                        transition: 'left .2s ease',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
+                      }} />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
-        ))}
-        <style>{`@keyframes vlfSpin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
-
-        <div style={{ height: 6 }} />
-        <SectionLabel>Change password</SectionLabel>
-        <input type="password" placeholder="New password" value={newPw} onChange={(e) => setNewPw(e.target.value)}
-          style={{ width: '100%', border: `1px solid ${C.line}`, borderRadius: 10, padding: '10px 12px', fontSize: 13, outline: 'none', marginBottom: 8, background: C.surface, color: C.navySoft, boxSizing: 'border-box' }} />
-        <input type="password" placeholder="Confirm new password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)}
-          style={{ width: '100%', border: `1px solid ${C.line}`, borderRadius: 10, padding: '10px 12px', fontSize: 13, outline: 'none', marginBottom: 8, background: C.surface, color: C.navySoft, boxSizing: 'border-box' }} />
-        {pwStatus && <p style={{ fontSize: 12, color: pwStatus === 'Password updated.' ? '#39604A' : '#7A2E2E', marginBottom: 8 }}>{pwStatus}</p>}
-        <button onClick={updatePassword} disabled={pwSaving || !newPw} style={{
-          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '11px', borderRadius: 12,
-          border: `1px solid ${C.line}`, background: C.surface, color: C.navySoft, fontSize: 13, fontWeight: 700, opacity: (!newPw || pwSaving) ? 0.6 : 1,
-        }}>
-          <KeyRound size={14} /> {pwSaving ? 'Updating…' : 'Update password'}
-        </button>
-
-        <div style={{ height: 16 }} />
-        <SectionLabel>Delete data</SectionLabel>
-        <p style={{ fontSize: 12, color: C.muted, marginTop: -4, marginBottom: 12 }}>Clear a specific month, or wipe everything. This cannot be undone.</p>
-        {months.length === 0 && <div style={{ fontSize: 12.5, color: C.muted, marginBottom: 12 }}>No entries yet.</div>}
-        {months.map((m) => (
-          <div key={m} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', border: `1px solid ${C.line}`, borderRadius: 10, marginBottom: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: C.navySoft }}>{monthLabel(m)}</span>
-            <button onClick={() => onClearMonth(m)} style={{ fontSize: 12, fontWeight: 700, color: '#B23A34', background: 'none', border: '1px solid #B23A3440', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>
-              Clear
-            </button>
-          </div>
-        ))}
-        {months.length > 0 && (
-          <button onClick={onClearAll} style={{
-            width: '100%', marginTop: 4, padding: '13px', borderRadius: 12, border: '1px solid #B23A34',
-            background: '#B23A3412', color: '#B23A34', fontSize: 13.5, fontWeight: 700, cursor: 'pointer',
-          }}>
-            Clear all data
-          </button>
         )}
 
-        <div style={{ height: 16 }} />
+        {/* ============================================================ */}
+        {/* TAB 2: PROFILE PHOTO & AVATAR MANAGEMENT                     */}
+        {/* ============================================================ */}
+        {activeTab === 'profile' && (
+          <div>
+            <SectionLabel>Profile Picture & Identity</SectionLabel>
+            <p style={{ fontSize: 12, color: C.muted, marginTop: -4, marginBottom: 16 }}>
+              Upload your personal photo or company logo to display on the top bar and profile menus.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '16px 0 24px', background: C.ice, borderRadius: 18, border: `1px solid ${C.line}`, marginBottom: 20 }}>
+              <div style={{
+                position: 'relative', width: 96, height: 96, borderRadius: '50%',
+                overflow: 'hidden', background: `linear-gradient(135deg, ${C.navy}, ${C.navySoft})`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: '#fff', fontSize: 32, fontWeight: 800,
+                border: `3px solid ${C.silver}`, boxShadow: '0 8px 24px rgba(20,17,13,0.15)',
+                marginBottom: 14,
+              }}>
+                {profile?.avatar ? (
+                  <img src={profile.avatar} alt="Profile Avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <span>{(profile?.name || 'Vault').charAt(0).toUpperCase()}</span>
+                )}
+              </div>
+
+              {/* Hidden file input */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleAvatarUpload}
+                style={{ display: 'none' }}
+              />
+
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px',
+                    borderRadius: 12, border: 'none', background: C.navy, color: '#fff',
+                    fontSize: 13, fontWeight: 700, cursor: 'pointer', boxShadow: '0 2px 8px rgba(20,17,13,0.12)',
+                  }}
+                >
+                  <Camera size={15} /> Upload Photo
+                </button>
+
+                {profile?.avatar && (
+                  <button
+                    type="button"
+                    onClick={handleRemoveAvatar}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px',
+                      borderRadius: 12, border: '1px solid #B23A3433', background: C.surface, color: '#B23A34',
+                      fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                    }}
+                  >
+                    <Trash2 size={14} /> Remove Photo
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Rename Workspace / Profile */}
+            <SectionLabel>Workspace Name</SectionLabel>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+              <input
+                type="text"
+                value={profileName}
+                onChange={(e) => setProfileName(e.target.value)}
+                placeholder="e.g. My Personal Vault"
+                style={{ flex: 1, border: `1px solid ${C.line}`, borderRadius: 12, padding: '11px 14px', fontSize: 13.5, background: C.surface, color: C.navySoft, outline: 'none' }}
+              />
+              <button
+                type="button"
+                onClick={handleSaveProfileName}
+                style={{ padding: '11px 18px', borderRadius: 12, border: 'none', background: C.navy, color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+              >
+                Update
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================ */}
+        {/* TAB 3: TRASH SPACE & REDO HISTORY (LAST 3 DAYS)              */}
+        {/* ============================================================ */}
+        {activeTab === 'trash' && (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <SectionLabel>Trash Space & Redo (Last 3 Days)</SectionLabel>
+              {validTrashEntries.length > 0 && (
+                <button
+                  type="button"
+                  onClick={onEmptyTrash}
+                  style={{ background: 'none', border: 'none', color: '#B23A34', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}
+                >
+                  Empty Trash
+                </button>
+              )}
+            </div>
+
+            <p style={{ fontSize: 12, color: C.muted, marginTop: -4, marginBottom: 14, lineHeight: 1.45 }}>
+              Mistakenly deleted an entry? Deleted entries from the <strong>last 3 days</strong> are preserved here. You can redo/restore them back into your active vault or wipe them permanently.
+            </p>
+
+            {validTrashEntries.length === 0 ? (
+              <div style={{
+                textAlign: 'center', padding: '36px 18px', background: C.ice, borderRadius: 16,
+                border: `1px dashed ${C.line}`, marginBottom: 20,
+              }}>
+                <div style={{ width: 44, height: 44, borderRadius: '50%', background: `${C.line}66`, margin: '0 auto 10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Trash2 size={20} color={C.muted} />
+                </div>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: C.heading, marginBottom: 4 }}>Trash is empty</div>
+                <div style={{ fontSize: 12, color: C.muted }}>No deleted entries in the last 3 days.</div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 9, marginBottom: 20 }}>
+                {validTrashEntries.map((e) => {
+                  const typeObj = TYPES.find((t) => t.key === e.type) || TYPES[0];
+                  const Icon = typeObj.icon;
+                  const timeAgoStr = timeAgo(e.deletedAt);
+                  return (
+                    <div
+                      key={e.id}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '12px 14px', borderRadius: 14,
+                        border: `1px solid ${C.line}`, background: C.surface,
+                        boxShadow: '0 1px 3px rgba(20,17,13,0.03)',
+                      }}
+                    >
+                      <div style={{ minWidth: 0, flex: 1, paddingRight: 10 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                          <span style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 3,
+                            fontSize: 10, fontWeight: 800, padding: '2px 6px', borderRadius: 6,
+                            background: `${typeObj.color}15`, color: typeObj.color,
+                          }}>
+                            <Icon size={11} /> {typeObj.label}
+                          </span>
+                          <span style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>
+                            {e.date}
+                          </span>
+                          <span style={{ fontSize: 10, color: '#B23A34', fontWeight: 700, background: '#B23A3412', padding: '1px 5px', borderRadius: 4 }}>
+                            Deleted {timeAgoStr}
+                          </span>
+                        </div>
+
+                        <div style={{ fontSize: 13, fontWeight: 700, color: C.heading, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {e.category || 'Entry'}{e.note ? ` · ${e.note}` : ''}
+                        </div>
+
+                        <div style={{ fontFamily: MONO, fontSize: 13.5, fontWeight: 800, color: typeObj.color, marginTop: 2 }}>
+                          {fmtMoney(e.amount, e.currency)}
+                        </div>
+                      </div>
+
+                      {/* Actions: Redo / Restore + Permanent Delete */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                        <button
+                          type="button"
+                          onClick={() => onRestoreTrash && onRestoreTrash(e.id)}
+                          title="Restore entry back into vault"
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 4, padding: '7px 11px',
+                            borderRadius: 10, border: 'none', background: C.navy, color: '#fff',
+                            fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                          }}
+                        >
+                          <RotateCcw size={12} /> Redo / Restore
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => onDeleteTrashPermanent && onDeleteTrashPermanent(e.id)}
+                          title="Delete permanently"
+                          style={{
+                            padding: '7px 9px', borderRadius: 10, border: '1px solid #B23A3433',
+                            background: C.ice, color: '#B23A34', cursor: 'pointer',
+                          }}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ============================================================ */}
+        {/* TAB 4: GENERAL, LIMITS, RATES, SECURITY                      */}
+        {/* ============================================================ */}
+        {activeTab === 'general' && (
+          <div>
+            <SectionLabel>Appearance</SectionLabel>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+              {[{ k: 'light', l: 'Light', Icon: Sun }, { k: 'dark', l: 'Dark', Icon: Moon }].map(({ k, l, Icon }) => (
+                <button key={k} onClick={() => onThemeChange(k)} style={{
+                  flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '11px 0',
+                  borderRadius: 12, border: `1.5px solid ${theme === k ? C.navy : C.line}`, background: theme === k ? `${C.navy}12` : C.surface,
+                  color: theme === k ? C.navy : C.muted, fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                }}>
+                  <Icon size={15} /> {l}
+                </button>
+              ))}
+            </div>
+
+            <SectionLabel>Spending & Expense Limits</SectionLabel>
+            <p style={{ fontSize: 12, color: C.muted, marginTop: -4, marginBottom: 10 }}>
+              Set limits to alert you when expenses cross your budget.
+            </p>
+
+            {/* Limit Period Selector */}
+            <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+              {[
+                { k: 'week', l: 'Weekly' },
+                { k: 'month', l: 'Monthly' },
+                { k: 'total', l: 'All time' },
+              ].map((p) => (
+                <button
+                  key={p.k}
+                  type="button"
+                  onClick={() => setBudgetPeriod(p.k)}
+                  style={{
+                    flex: 1, padding: '8px 4px', borderRadius: 10, fontSize: 12, fontWeight: 700,
+                    border: `1.5px solid ${budgetPeriod === p.k ? C.navy : C.line}`,
+                    background: budgetPeriod === p.k ? `${C.navy}14` : C.surface,
+                    color: budgetPeriod === p.k ? C.navy : C.muted,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {p.l}
+                </button>
+              ))}
+            </div>
+
+            {enabledCurrencies.map((c) => (
+              <div key={c} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                <div style={{ width: 52, fontSize: 13, fontWeight: 700, color: C.navySoft }}>{c}</div>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  placeholder={`No ${budgetPeriod === 'week' ? 'weekly' : budgetPeriod === 'month' ? 'monthly' : 'total'} limit`}
+                  value={limits[c] ?? ''}
+                  onChange={(e) => setLimits((p) => ({ ...p, [c]: e.target.value }))}
+                  style={{
+                    flex: 1, border: `1px solid ${C.line}`, borderRadius: 10, padding: '9px 12px',
+                    fontSize: 13, outline: 'none', background: C.surface, color: C.navySoft,
+                  }}
+                />
+              </div>
+            ))}
+
+            <div style={{ height: 6 }} />
+            <SectionLabel right={
+              <button onClick={onRefreshRates} disabled={ratesLoading} style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', color: C.steel, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                <RefreshCw size={12} style={{ animation: ratesLoading ? 'vlfSpin 1s linear infinite' : 'none' }} /> Refresh
+              </button>
+            }>Live exchange rates</SectionLabel>
+            <p style={{ fontSize: 12, color: C.muted, marginTop: -4, marginBottom: 4 }}>PKR value of 1 unit — used to convert your Net Worth total.</p>
+            <p style={{ fontSize: 11.5, color: C.muted, marginBottom: 12 }}>Last updated: {timeAgo(settings.ratesFetchedAt)}</p>
+            {enabledCurrencies.filter((c) => c !== 'PKR').map((c) => (
+              <div key={c} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                <div style={{ width: 52, fontSize: 13, fontWeight: 700, color: C.navySoft }}>{c}</div>
+                <div style={{ flex: 1, padding: '9px 12px', fontSize: 13, color: C.navySoft, background: C.ice, borderRadius: 10, fontFamily: MONO }}>
+                  {settings.rates[c] ? fmtAmount(settings.rates[c]) : '—'}
+                </div>
+              </div>
+            ))}
+            <style>{`@keyframes vlfSpin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
+
+            <div style={{ height: 6 }} />
+            <SectionLabel>Change password</SectionLabel>
+            <input type="password" placeholder="New password" value={newPw} onChange={(e) => setNewPw(e.target.value)}
+              style={{ width: '100%', border: `1px solid ${C.line}`, borderRadius: 10, padding: '10px 12px', fontSize: 13, outline: 'none', marginBottom: 8, background: C.surface, color: C.navySoft, boxSizing: 'border-box' }} />
+            <input type="password" placeholder="Confirm new password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)}
+              style={{ width: '100%', border: `1px solid ${C.line}`, borderRadius: 10, padding: '10px 12px', fontSize: 13, outline: 'none', marginBottom: 8, background: C.surface, color: C.navySoft, boxSizing: 'border-box' }} />
+            {pwStatus && <p style={{ fontSize: 12, color: pwStatus === 'Password updated.' ? '#39604A' : '#7A2E2E', marginBottom: 8 }}>{pwStatus}</p>}
+            <button onClick={updatePassword} disabled={pwSaving || !newPw} style={{
+              width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '11px', borderRadius: 12,
+              border: `1px solid ${C.line}`, background: C.surface, color: C.navySoft, fontSize: 13, fontWeight: 700, opacity: (!newPw || pwSaving) ? 0.6 : 1, cursor: 'pointer',
+            }}>
+              <KeyRound size={14} /> {pwSaving ? 'Updating…' : 'Update password'}
+            </button>
+
+            <div style={{ height: 16 }} />
+            <SectionLabel>Delete data</SectionLabel>
+            <p style={{ fontSize: 12, color: C.muted, marginTop: -4, marginBottom: 12 }}>Clear a specific month, or wipe everything. This cannot be undone.</p>
+            {months.length === 0 && <div style={{ fontSize: 12.5, color: C.muted, marginBottom: 12 }}>No entries yet.</div>}
+            {months.map((m) => (
+              <div key={m} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', border: `1px solid ${C.line}`, borderRadius: 10, marginBottom: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: C.navySoft }}>{monthLabel(m)}</span>
+                <button onClick={() => onClearMonth(m)} style={{ fontSize: 12, fontWeight: 700, color: '#B23A34', background: 'none', border: '1px solid #B23A3440', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>
+                  Clear
+                </button>
+              </div>
+            ))}
+            {months.length > 0 && (
+              <button onClick={onClearAll} style={{
+                width: '100%', marginTop: 4, padding: '13px', borderRadius: 12, border: '1px solid #B23A34',
+                background: '#B23A3412', color: '#B23A34', fontSize: 13.5, fontWeight: 700, cursor: 'pointer',
+              }}>
+                Clear all data
+              </button>
+            )}
+          </div>
+        )}
+
+        <div style={{ height: 20 }} />
+
+        {/* Global Save Button */}
         <button onClick={() => {
           const cleanLimits = {};
           Object.entries(limits).forEach(([k, v]) => {
@@ -732,9 +1274,10 @@ function SettingsSheet({ open, onClose, settings, onSave, onSignOut, ratesLoadin
           });
           cleanLimits._period = budgetPeriod;
           onSave({ ...settings, budgetLimits: cleanLimits, budgetPeriod });
-        }} style={{ width: '100%', padding: '15px', borderRadius: 14, border: 'none', background: C.navy, color: '#fff', fontSize: 15, fontWeight: 700, marginBottom: 10, cursor: 'pointer' }}>
+        }} style={{ width: '100%', padding: '15px', borderRadius: 14, border: 'none', background: C.navy, color: '#fff', fontSize: 15, fontWeight: 700, marginBottom: 10, cursor: 'pointer', boxShadow: '0 4px 14px rgba(20,17,13,0.15)' }}>
           Save settings
         </button>
+
         <button onClick={onSignOut} style={{
           width: '100%', padding: '13px', borderRadius: 14, border: `1px solid ${C.line}`, background: C.surface, color: C.muted,
           fontSize: 13.5, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, cursor: 'pointer',
@@ -793,11 +1336,12 @@ function CurrencySparkline({ isUp, isDown, color }) {
   );
 }
 
-function TotalAcrossCurrencies({ entries, settings, display, setDisplay }) {
+function TotalAcrossCurrencies({ entries, settings, display, setDisplay, currencies = CURRENCIES }) {
   const C = useColors();
-  const perCurrency = CURRENCIES.map((c) => ({ currency: c, ...computeTotals(entries, c) }))
+  const perCurrency = (currencies || CURRENCIES).map((c) => ({ currency: c, ...computeTotals(entries, c) }))
     .filter((x) => x.expense || x.income || x.saving || x.investment || x.unaccounted);
-  const totalBase = perCurrency.reduce((sum, x) => sum + toBase(x.net, x.currency, settings.rates), 0);
+  // Exclude saving from aggregate total sum as requested by user (savings remain in individual balances)
+  const totalBase = perCurrency.reduce((sum, x) => sum + toBase((x.income || 0) + (x.investment || 0) - (x.expense || 0) - (x.unaccounted || 0), x.currency, settings.rates), 0);
   const converted = fromBase(totalBase, display, settings.rates);
 
   // Fallback realistic daily variance if prevRates not recorded yet
@@ -809,13 +1353,13 @@ function TotalAcrossCurrencies({ entries, settings, display, setDisplay }) {
     USDT: 0.24,
   };
 
-  const trendCurrencies = ['USD', 'EUR', 'GBP', 'TRY', 'USDT'];
+  const trendCurrencies = (currencies || CURRENCIES).filter((c) => c !== 'PKR');
 
   return (
     <Card style={{ padding: 18, marginBottom: 22, background: `linear-gradient(160deg, ${C.surface} 0%, ${C.ice} 130%)` }}>
       <SectionLabel>Total across all currencies</SectionLabel>
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
-        {CURRENCIES.map((c) => (
+        {currencies.map((c) => (
           <Chip key={c} active={display === c} onClick={() => setDisplay(c)} style={{ padding: '5px 11px', fontSize: 12 }}>{c}</Chip>
         ))}
       </div>
@@ -825,7 +1369,7 @@ function TotalAcrossCurrencies({ entries, settings, display, setDisplay }) {
 
       {/* Subtitle centered */}
       <div style={{ fontSize: 11, color: C.muted, textAlign: 'center', margin: '4px 0 12px', lineHeight: 1.45 }}>
-        Income + savings + investments, minus expenses & untracked — converted using live rates
+        Income + investments, minus expenses & untracked (pure savings tracked in individual cards) — converted using live rates
       </div>
 
       {/* Divider inside the box */}
@@ -954,8 +1498,9 @@ function TotalAcrossCurrencies({ entries, settings, display, setDisplay }) {
 /* Untracked / Missing Money Section (Untracked Money)                */
 /* ------------------------------------------------------------------ */
 
-function UntrackedMoneySection({ entries, activeCurrency, settings, onOpenAddEntry, setActiveCurrency }) {
+function UntrackedMoneySection({ entries, activeCurrency, settings, onOpenAddEntry, setActiveCurrency, currencies = CURRENCIES }) {
   const C = useColors();
+  const activeCurrenciesList = currencies && currencies.length ? currencies : CURRENCIES;
   const [selectedCurrency, setSelectedCurrency] = useState(activeCurrency || 'PKR');
   const [reconcileOpen, setReconcileOpen] = useState(false);
   const [reconcileCurrency, setReconcileCurrency] = useState(activeCurrency || 'PKR');
@@ -980,23 +1525,23 @@ function UntrackedMoneySection({ entries, activeCurrency, settings, onOpenAddEnt
   // Compute breakdown for EVERY currency
   const perCurrencyBreakdown = useMemo(() => {
     const map = {};
-    CURRENCIES.forEach((c) => {
+    activeCurrenciesList.forEach((c) => {
       const cEntries = unaccountedEntries.filter((e) => e.currency === c);
       const total = cEntries.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
       const inPkr = toBase(total, c, settings?.rates);
       map[c] = { total, inPkr, count: cEntries.length };
     });
     return map;
-  }, [unaccountedEntries, settings?.rates]);
+  }, [unaccountedEntries, settings?.rates, activeCurrenciesList]);
 
   // Total across all currencies converted to PKR
   const totalAllInPkr = useMemo(() => {
-    return CURRENCIES.reduce((sum, c) => sum + (perCurrencyBreakdown[c]?.inPkr || 0), 0);
-  }, [perCurrencyBreakdown]);
+    return activeCurrenciesList.reduce((sum, c) => sum + (perCurrencyBreakdown[c]?.inPkr || 0), 0);
+  }, [perCurrencyBreakdown, activeCurrenciesList]);
 
   const totalCurrenciesWithMissing = useMemo(() => {
-    return CURRENCIES.filter((c) => (perCurrencyBreakdown[c]?.total || 0) > 0).length;
-  }, [perCurrencyBreakdown]);
+    return activeCurrenciesList.filter((c) => (perCurrencyBreakdown[c]?.total || 0) > 0).length;
+  }, [perCurrencyBreakdown, activeCurrenciesList]);
 
   // Entries filtered by selectedCurrency (or 'All')
   const filteredEntries = useMemo(() => {
@@ -1103,7 +1648,7 @@ function UntrackedMoneySection({ entries, activeCurrency, settings, onOpenAddEnt
           gridTemplateColumns: 'repeat(3, 1fr)',
           gap: 6,
         }}>
-          {CURRENCIES.map((c) => {
+          {activeCurrenciesList.map((c) => {
             const data = perCurrencyBreakdown[c] || { total: 0, inPkr: 0, count: 0 };
             const isSelected = selectedCurrency === c;
             const hasMissing = data.total > 0;
@@ -1227,7 +1772,7 @@ function UntrackedMoneySection({ entries, activeCurrency, settings, onOpenAddEnt
             </div>
             {/* Currency selector inside reconciler */}
             <div style={{ display: 'flex', gap: 4 }}>
-              {CURRENCIES.map((c) => (
+              {activeCurrenciesList.map((c) => (
                 <button
                   key={c}
                   type="button"
@@ -1386,12 +1931,14 @@ function Dashboard({
   onPayAndLogReminder,
   exchanges = [],
   onOpenExchange,
+  currencies = CURRENCIES,
 }) {
   const C = useColors();
+  const activeCurrenciesList = currencies && currencies.length ? currencies : CURRENCIES;
   const totals = computeTotals(entries, activeCurrency);
   const thisMonth = monthKey(todayStr());
   const monthExpenses = {};
-  CURRENCIES.forEach((c) => {
+  activeCurrenciesList.forEach((c) => {
     monthExpenses[c] = entries.filter((e) => e.currency === c && (e.type === 'expense' || e.type === 'unaccounted') && monthKey(e.date) === thisMonth)
       .reduce((s, e) => s + Number(e.amount), 0);
   });
@@ -1404,11 +1951,11 @@ function Dashboard({
         </div>
       </div>
 
-      <TotalAcrossCurrencies entries={entries} settings={settings} display={totalDisplay} setDisplay={setTotalDisplay} />
+      <TotalAcrossCurrencies entries={entries} settings={settings} display={totalDisplay} setDisplay={setTotalDisplay} currencies={activeCurrenciesList} />
 
       <SectionLabel>Currencies</SectionLabel>
       <div className="vlf-currency-row" style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 20, paddingTop: 10, paddingBottom: 38 }}>
-        {CURRENCIES.map((c) => {
+        {activeCurrenciesList.map((c) => {
           const active = activeCurrency === c;
           const rate = settings.rates[c];
           return (
@@ -1589,7 +2136,7 @@ function Dashboard({
         const period = settings.budgetPeriod || settings.budgetLimits?._period || 'week';
         const periodLabel = period === 'week' ? 'This week' : period === 'month' ? 'This month' : 'All time';
         const activeLimit = Number(settings.budgetLimits?.[activeCurrency]) || 0;
-        const otherCurrenciesWithLimits = CURRENCIES.filter((c) => c !== activeCurrency && Number(settings.budgetLimits?.[c]) > 0);
+        const otherCurrenciesWithLimits = activeCurrenciesList.filter((c) => c !== activeCurrency && Number(settings.budgetLimits?.[c]) > 0);
 
         if (!activeLimit && otherCurrenciesWithLimits.length === 0) return null;
 
@@ -1666,7 +2213,7 @@ function Dashboard({
       <Divider />
       <SectionLabel>All currencies snapshot</SectionLabel>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {CURRENCIES.map((c) => {
+        {activeCurrenciesList.map((c) => {
           const t = computeTotals(entries, c);
           if (!t.expense && !t.income && !t.saving && !t.investment && !t.unaccounted) return null;
           const pkrVal = toBase(t.net, c, settings.rates);
@@ -1730,8 +2277,9 @@ function Dashboard({
 /* History                                                            */
 /* ------------------------------------------------------------------ */
 
-function HistoryScreen({ entries, onEdit, settings, initialCurrency, onCurrencyChange }) {
+function HistoryScreen({ entries, onEdit, settings, initialCurrency, onCurrencyChange, currencies = CURRENCIES }) {
   const C = useColors();
+  const activeCurrenciesList = currencies && currencies.length ? currencies : CURRENCIES;
   const [filterCurrency, setFilterCurrency] = useState(initialCurrency || 'All');
   const [filterType, setFilterType] = useState('All');
   const [range, setRange] = useState('all');
@@ -1802,7 +2350,7 @@ function HistoryScreen({ entries, onEdit, settings, initialCurrency, onCurrencyC
       unaccounted: {},
     };
 
-    CURRENCIES.forEach((c) => {
+    activeCurrenciesList.forEach((c) => {
       breakdown.income[c] = { amount: 0, count: 0, pkr: 0 };
       breakdown.expense[c] = { amount: 0, count: 0, pkr: 0 };
       breakdown.saving[c] = { amount: 0, count: 0, pkr: 0 };
@@ -1820,7 +2368,7 @@ function HistoryScreen({ entries, onEdit, settings, initialCurrency, onCurrencyC
     });
 
     return breakdown;
-  }, [entries, range, settings?.rates]);
+  }, [entries, range, settings?.rates, activeCurrenciesList]);
 
   // Overall calculations for the bottom summary block
   const totalSummary = useMemo(() => {
@@ -2126,7 +2674,7 @@ function HistoryScreen({ entries, onEdit, settings, initialCurrency, onCurrencyC
         </div>
 
         {/* Individual Currency Coin Icons */}
-        {CURRENCIES.map((c) => {
+        {activeCurrenciesList.map((c) => {
           const active = filterCurrency === c;
           const rate = settings.rates[c];
           return (
@@ -2179,7 +2727,7 @@ function HistoryScreen({ entries, onEdit, settings, initialCurrency, onCurrencyC
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {CURRENCIES.map((c) => {
+            {activeCurrenciesList.map((c) => {
               const data = perCurrencyBreakdown[filterType]?.[c] || { amount: 0, count: 0, pkr: 0 };
               const isCurrActive = filterCurrency === c;
               return (
@@ -2247,7 +2795,7 @@ function HistoryScreen({ entries, onEdit, settings, initialCurrency, onCurrencyC
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {CURRENCIES.map((c) => {
+            {activeCurrenciesList.map((c) => {
               const inc = perCurrencyBreakdown.income?.[c]?.amount || 0;
               const exp = perCurrencyBreakdown.expense?.[c]?.amount || 0;
               const sav = perCurrencyBreakdown.saving?.[c]?.amount || 0;
@@ -2501,7 +3049,7 @@ function HistoryScreen({ entries, onEdit, settings, initialCurrency, onCurrencyC
 /* Net Worth                                                          */
 /* ------------------------------------------------------------------ */
 
-function NetWorthScreen({ entries, settings, onNavigateToHistory }) {
+function NetWorthScreen({ entries, settings, onNavigateToHistory, currencies = CURRENCIES }) {
   const C = useColors();
   const [display, setDisplay] = useState(settings.displayCurrency || 'PKR');
   const [groupBySource, setGroupBySource] = useState(false);
@@ -2509,13 +3057,15 @@ function NetWorthScreen({ entries, settings, onNavigateToHistory }) {
   // Per-currency breakdown including net balance (holdings/savings/investments/income - expenses - untracked)
   // and breakdown of holdings vs net
   const perCurrency = useMemo(() => {
-    return CURRENCIES.map((c) => {
+    return (currencies || CURRENCIES).map((c) => {
       const t = computeTotals(entries, c);
       const grossHoldings = (t.saving || 0) + (t.investment || 0);
       const totalIncome = t.income || 0;
       const totalExpenses = t.expense || 0;
+      const totalSavings = t.saving || 0;
+      const totalInvestments = t.investment || 0;
       const totalUntracked = t.unaccounted || 0;
-      // Net worth in this currency = (Income + Saving + Investment) - Expense - Untracked
+      // Net worth in this individual currency = (Income + Saving + Investment) - Expense - Untracked
       const net = t.net;
       const inPkr = toBase(net, c, settings.rates);
       const count = entries.filter((e) => e.currency === c).length;
@@ -2526,74 +3076,78 @@ function NetWorthScreen({ entries, settings, onNavigateToHistory }) {
         grossHoldings,
         totalIncome,
         totalExpenses,
+        totalSavings,
+        totalInvestments,
         totalUntracked,
         count,
         hasActivity: (t.income || t.expense || t.saving || t.investment || t.unaccounted) > 0,
       };
     }).filter((x) => x.hasActivity || x.count > 0);
-  }, [entries, settings.rates]);
+  }, [entries, settings.rates, currencies]);
 
-  // Total net worth across all currencies converted to base PKR, then formatted to selected display currency
+  // Total net worth across all currencies converted to base PKR (EXCLUDING savings as requested by user)
   const totalNetInBasePkr = useMemo(() => {
-    return CURRENCIES.reduce((sum, c) => {
+    return (currencies || CURRENCIES).reduce((sum, c) => {
       const t = computeTotals(entries, c);
-      return sum + toBase(t.net, c, settings.rates);
+      // Exclude saving from aggregate total net worth sum
+      const netWithoutSaving = (t.income || 0) + (t.investment || 0) - (t.expense || 0) - (t.unaccounted || 0);
+      return sum + toBase(netWithoutSaving, c, settings.rates);
     }, 0);
-  }, [entries, settings.rates]);
+  }, [entries, settings.rates, currencies]);
 
   const convertedTotalNet = fromBase(totalNetInBasePkr, display, settings.rates);
 
   // Total gross income across all currencies converted to base PKR
   const totalIncomeBase = useMemo(() => {
-    return CURRENCIES.reduce((sum, c) => {
+    return (currencies || CURRENCIES).reduce((sum, c) => {
       const t = computeTotals(entries, c);
       return sum + toBase(t.income || 0, c, settings.rates);
     }, 0);
-  }, [entries, settings.rates]);
+  }, [entries, settings.rates, currencies]);
   const convertedIncome = fromBase(totalIncomeBase, display, settings.rates);
 
   // Total savings and investments converted
   const totalSavingsBase = useMemo(() => {
-    return CURRENCIES.reduce((sum, c) => {
+    return (currencies || CURRENCIES).reduce((sum, c) => {
       const t = computeTotals(entries, c);
       return sum + toBase(t.saving || 0, c, settings.rates);
     }, 0);
-  }, [entries, settings.rates]);
+  }, [entries, settings.rates, currencies]);
   const convertedSavings = fromBase(totalSavingsBase, display, settings.rates);
 
   const totalInvestmentsBase = useMemo(() => {
-    return CURRENCIES.reduce((sum, c) => {
+    return (currencies || CURRENCIES).reduce((sum, c) => {
       const t = computeTotals(entries, c);
       return sum + toBase(t.investment || 0, c, settings.rates);
     }, 0);
-  }, [entries, settings.rates]);
+  }, [entries, settings.rates, currencies]);
   const convertedInvestments = fromBase(totalInvestmentsBase, display, settings.rates);
 
-  // Gross before spend (Income + Savings + Investments)
-  const totalGrossBeforeSpendBase = totalIncomeBase + totalSavingsBase + totalInvestmentsBase;
+  // Gross before spend (Income + Investments, pure savings held aside)
+  const totalGrossBeforeSpendBase = totalIncomeBase + totalInvestmentsBase;
   const convertedGrossBeforeSpend = fromBase(totalGrossBeforeSpendBase, display, settings.rates);
 
   // Expenses & untracked converted
   const totalExpensesBase = useMemo(() => {
-    return CURRENCIES.reduce((sum, c) => {
+    return (currencies || CURRENCIES).reduce((sum, c) => {
       const t = computeTotals(entries, c);
       return sum + toBase(t.expense || 0, c, settings.rates);
     }, 0);
-  }, [entries, settings.rates]);
+  }, [entries, settings.rates, currencies]);
   const convertedExpenses = fromBase(totalExpensesBase, display, settings.rates);
 
   const totalUntrackedBase = useMemo(() => {
-    return CURRENCIES.reduce((sum, c) => {
+    return (currencies || CURRENCIES).reduce((sum, c) => {
       const t = computeTotals(entries, c);
       return sum + toBase(t.unaccounted || 0, c, settings.rates);
     }, 0);
-  }, [entries, settings.rates]);
+  }, [entries, settings.rates, currencies]);
   const convertedUntracked = fromBase(totalUntrackedBase, display, settings.rates);
 
   const totalOutflowBase = totalExpensesBase + totalUntrackedBase;
   const convertedOutflow = fromBase(totalOutflowBase, display, settings.rates);
 
-  // Net After spend (Total Net Worth)
+  // Net After spend (Total Net Worth excluding savings)
   const totalNetAfterSpendBase = totalGrossBeforeSpendBase - totalOutflowBase;
   const convertedNetAfterSpend = fromBase(totalNetAfterSpendBase, display, settings.rates);
 
@@ -2623,7 +3177,7 @@ function NetWorthScreen({ entries, settings, onNavigateToHistory }) {
       unaccounted: {},
       outflow: {},
     };
-    CURRENCIES.forEach((c) => {
+    (currencies || CURRENCIES).forEach((c) => {
       const t = computeTotals(entries, c);
       map.income[c] = t.income || 0;
       map.saving[c] = t.saving || 0;
@@ -2633,10 +3187,10 @@ function NetWorthScreen({ entries, settings, onNavigateToHistory }) {
       map.outflow[c] = (t.expense || 0) + (t.unaccounted || 0);
     });
     return map;
-  }, [entries]);
+  }, [entries, currencies]);
 
   const renderCurrencyLines = (typeKey, color) => {
-    const activeCurrs = CURRENCIES.filter((c) => (perCurrencyByType[typeKey]?.[c] || 0) > 0);
+    const activeCurrs = (currencies || CURRENCIES).filter((c) => (perCurrencyByType[typeKey]?.[c] || 0) > 0);
     if (activeCurrs.length === 0) return null;
     return (
       <div style={{
@@ -2680,7 +3234,7 @@ function NetWorthScreen({ entries, settings, onNavigateToHistory }) {
 
       <SectionLabel>Display in</SectionLabel>
       <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 6, marginBottom: 18 }}>
-        {CURRENCIES.map((c) => <Chip key={c} active={display === c} onClick={() => setDisplay(c)}>{c}</Chip>)}
+        {(currencies || CURRENCIES).map((c) => <Chip key={c} active={display === c} onClick={() => setDisplay(c)}>{c}</Chip>)}
       </div>
 
       {/* Main Net Worth Card */}
@@ -2705,7 +3259,7 @@ function NetWorthScreen({ entries, settings, onNavigateToHistory }) {
           {fmtMoney(convertedTotalNet, display)}
         </div>
         <div style={{ fontSize: 11, opacity: 0.7, marginTop: 6 }}>
-          Income + Savings + Investments − Expenses & Untracked (live rates)
+          Income + Investments − Expenses & Untracked (pure savings kept in individual cards)
         </div>
 
         {display !== 'PKR' && (
@@ -3284,48 +3838,6 @@ function ReportScreen({ entries, reminders = [], requestPassword }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Profile menu (avatar + dropdown: Settings, Logout)                 */
-/* ------------------------------------------------------------------ */
-
-function ProfileMenu({ onOpenSettings, onSignOut }) {
-  const C = useColors();
-  const [open, setOpen] = useState(false);
-  return (
-    <div style={{ position: 'relative' }}>
-      <button onClick={() => setOpen((v) => !v)} style={{
-        width: 36, height: 36, borderRadius: '50%', background: C.surface, border: `1px solid ${C.line}`,
-        display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0,
-      }}>
-        <UserCircle size={19} color={C.heading} />
-      </button>
-      {open && (
-        <>
-          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 44 }} />
-          <div style={{
-            position: 'absolute', top: 44, right: 0, zIndex: 45, background: C.surface, border: `1px solid ${C.line}`,
-            borderRadius: 14, boxShadow: '0 10px 26px rgba(20,17,13,0.18)', minWidth: 168, overflow: 'hidden',
-          }}>
-            <button onClick={() => { setOpen(false); onOpenSettings(); }} style={{
-              width: '100%', display: 'flex', alignItems: 'center', gap: 9, padding: '12px 14px', background: 'none',
-              border: 'none', fontSize: 13.5, fontWeight: 600, color: C.navySoft, textAlign: 'left', cursor: 'pointer',
-            }}>
-              <Settings size={15} /> Settings
-            </button>
-            <div style={{ height: 1, background: C.line }} />
-            <button onClick={() => { setOpen(false); onSignOut(); }} style={{
-              width: '100%', display: 'flex', alignItems: 'center', gap: 9, padding: '12px 14px', background: 'none',
-              border: 'none', fontSize: 13.5, fontWeight: 600, color: '#7A2E2E', textAlign: 'left', cursor: 'pointer',
-            }}>
-              <LogOut size={15} /> Sign out
-            </button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
 /* Add FAB menu — toggled by the + button, choose Add entry / Reminder / Calc */
 /* ------------------------------------------------------------------ */
 
@@ -3749,8 +4261,10 @@ function ExchangeSheet({
   exchanges = [],
   settings,
   entries = [],
+  currencies = CURRENCIES,
 }) {
   const C = useColors();
+  const activeCurrenciesList = currencies && currencies.length ? currencies : CURRENCIES;
   const [tab, setTab] = useState('convert'); // 'convert' | 'sell' | 'history'
 
   // Convert (Buy Foreign Currency) form state
@@ -4068,7 +4582,7 @@ function ExchangeSheet({
 
               {/* Currency Selection Chips - Centered */}
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
-                {CURRENCIES.map((c) => (
+                {activeCurrenciesList.map((c) => (
                   <Chip
                     key={c}
                     active={fromCurr === c}
@@ -4172,7 +4686,7 @@ function ExchangeSheet({
 
               {/* Currency Selection Chips - Centered */}
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
-                {CURRENCIES.map((c) => (
+                {activeCurrenciesList.map((c) => (
                   <Chip
                     key={c}
                     active={toCurr === c}
@@ -5274,8 +5788,9 @@ function safeEval(raw) {
 
 const OPERATORS = ['+', '−', '×', '÷'];
 
-function CalculatorScreen({ settings, onSaveEntry, onOpenAddEntry, saving, ratesLoading, onRefreshRates }) {
+function CalculatorScreen({ settings, onSaveEntry, onOpenAddEntry, saving, ratesLoading, onRefreshRates, currencies = CURRENCIES }) {
   const C = useColors();
+  const activeCurrenciesList = currencies && currencies.length ? currencies : CURRENCIES;
   const [mode, setMode] = useState('basic');
   const [currency, setCurrency] = useState(settings.lastCurrency || 'PKR');
   const [input, setInput] = useState('');
@@ -5587,7 +6102,7 @@ function CalculatorScreen({ settings, onSaveEntry, onOpenAddEntry, saving, rates
 
           {/* Multi-Currency Conversion Rows */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 18 }}>
-            {CURRENCIES.map((c) => {
+            {activeCurrenciesList.map((c) => {
               const isBase = activeConvertCurrency === c;
               const convertedNum = isBase ? numericConvertValue : fromBase(baseConvertPkr, c, settings.rates);
               const displayVal = isBase ? convertInput : (convertInput === '' ? '' : fmtAmount(convertedNum));
@@ -5783,7 +6298,7 @@ function CalculatorScreen({ settings, onSaveEntry, onOpenAddEntry, saving, rates
             <>
               <SectionLabel>Currency</SectionLabel>
               <div className="vlf-currency-row" style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 14, paddingTop: 4, paddingBottom: 20 }}>
-                {CURRENCIES.map((c) => (
+                {activeCurrenciesList.map((c) => (
                   <div key={c} className="vlf-currency-item" onClick={() => setCurrency(c)}>
                     <div className="vlf-currency-icon-wrap" style={{ borderColor: currency === c ? C.navy : 'transparent' }}>
                       <CoinIcon currency={c} size={32} />
@@ -5939,10 +6454,358 @@ function CalculatorScreen({ settings, onSaveEntry, onOpenAddEntry, saving, rates
 }
 
 /* ------------------------------------------------------------------ */
+/* Profile Menu & Workspace Switcher Header Dropdown                  */
+/* ------------------------------------------------------------------ */
+
+function ProfileMenu({
+  profile,
+  profiles = [],
+  trashCount = 0,
+  onOpenSettings,
+  onSwitchProfile,
+  onSignOut,
+}) {
+  const C = useColors();
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    if (open) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open]);
+
+  const initials = (profile?.name || 'Vault').charAt(0).toUpperCase();
+
+  return (
+    <div ref={menuRef} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="vlf-hover"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          background: C.surface,
+          border: `1px solid ${C.line}`,
+          borderRadius: 999,
+          padding: '4px 10px 4px 5px',
+          cursor: 'pointer',
+          boxShadow: '0 1px 3px rgba(20,17,13,0.06)',
+          transition: 'all .15s ease',
+        }}
+      >
+        {/* Profile Avatar circle */}
+        <div style={{
+          width: 28,
+          height: 28,
+          borderRadius: '50%',
+          overflow: 'hidden',
+          background: `linear-gradient(135deg, ${C.navy}, ${C.navySoft})`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: '#fff',
+          fontSize: 12,
+          fontWeight: 800,
+          border: `1.5px solid ${C.silver}`,
+          flexShrink: 0,
+        }}>
+          {profile?.avatar ? (
+            <img src={profile.avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          ) : (
+            <span>{initials}</span>
+          )}
+        </div>
+
+        {/* Workspace Name & Arrow */}
+        <span style={{
+          fontSize: 12,
+          fontWeight: 700,
+          color: C.heading,
+          maxWidth: 95,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}>
+          {profile?.name || 'Personal'}
+        </span>
+
+        {trashCount > 0 && (
+          <span style={{
+            fontSize: 9,
+            fontWeight: 800,
+            padding: '1px 5px',
+            borderRadius: 6,
+            background: '#B23A34',
+            color: '#fff',
+          }}>
+            {trashCount}
+          </span>
+        )}
+
+        <ChevronDown size={13} color={C.muted} />
+      </button>
+
+      {/* Dropdown Menu */}
+      {open && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 8px)',
+            right: 0,
+            width: 240,
+            background: C.surface,
+            border: `1px solid ${C.line}`,
+            borderRadius: 16,
+            boxShadow: '0 10px 28px rgba(20,17,13,0.18)',
+            padding: '8px',
+            zIndex: 60,
+            fontFamily: SANS,
+          }}
+        >
+          {/* Header with profile info */}
+          <div style={{ padding: '8px 10px 10px', borderBottom: `1px solid ${C.line}`, marginBottom: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+              <div style={{
+                width: 36,
+                height: 36,
+                borderRadius: '50%',
+                overflow: 'hidden',
+                background: `linear-gradient(135deg, ${C.navy}, ${C.navySoft})`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#fff',
+                fontSize: 14,
+                fontWeight: 800,
+                border: `1.5px solid ${C.silver}`,
+                flexShrink: 0,
+              }}>
+                {profile?.avatar ? (
+                  <img src={profile.avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <span>{initials}</span>
+                )}
+              </div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: C.heading, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {profile?.name || 'Personal Vault'}
+                </div>
+                <div style={{ fontSize: 10, color: C.muted, fontWeight: 600 }}>
+                  {(profile?.enabledCurrencies || CURRENCIES).length} Currencies Enabled
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Switch Workspaces Section if multiple */}
+          {profiles && profiles.length > 1 && (
+            <div style={{ marginBottom: 6, padding: '2px 0', borderBottom: `1px solid ${C.line}` }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: C.muted, textTransform: 'uppercase', padding: '4px 10px', letterSpacing: '0.05em' }}>
+                Switch Workspace
+              </div>
+              {profiles.map((p) => {
+                const isActive = p.id === profile?.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => {
+                      if (onSwitchProfile) onSwitchProfile(p.id);
+                      setOpen(false);
+                    }}
+                    style={{
+                      width: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '7px 10px',
+                      borderRadius: 8,
+                      border: 'none',
+                      background: isActive ? `${C.navy}10` : 'transparent',
+                      color: isActive ? C.navy : C.heading,
+                      fontSize: 12,
+                      fontWeight: isActive ? 800 : 600,
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                    }}
+                  >
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+                    {isActive && <Check size={13} color={C.steel} />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Quick Action Links */}
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              if (onOpenSettings) onOpenSettings('workspace');
+            }}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '8px 10px',
+              borderRadius: 8,
+              border: 'none',
+              background: 'transparent',
+              color: C.heading,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer',
+              textAlign: 'left',
+            }}
+          >
+            <Sliders size={14} color={C.steel} />
+            <span>Currency & Workspace Setup</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              if (onOpenSettings) onOpenSettings('profile');
+            }}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '8px 10px',
+              borderRadius: 8,
+              border: 'none',
+              background: 'transparent',
+              color: C.heading,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer',
+              textAlign: 'left',
+            }}
+          >
+            <Camera size={14} color={C.steel} />
+            <span>Profile Photo & Name</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              if (onOpenSettings) onOpenSettings('trash');
+            }}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '8px 10px',
+              borderRadius: 8,
+              border: 'none',
+              background: 'transparent',
+              color: C.heading,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer',
+              textAlign: 'left',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <RotateCcw size={14} color="#B23A34" />
+              <span>Trash & Redo History</span>
+            </div>
+            {trashCount > 0 && (
+              <span style={{ fontSize: 10, fontWeight: 800, padding: '1px 6px', borderRadius: 6, background: '#B23A3420', color: '#B23A34' }}>
+                {trashCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              if (onOpenSettings) onOpenSettings('general');
+            }}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '8px 10px',
+              borderRadius: 8,
+              border: 'none',
+              background: 'transparent',
+              color: C.heading,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer',
+              textAlign: 'left',
+            }}
+          >
+            <Settings size={14} color={C.muted} />
+            <span>General & Limits</span>
+          </button>
+
+          <div style={{ height: 1, background: C.line, margin: '5px 0' }} />
+
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              if (onSignOut) onSignOut();
+            }}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '8px 10px',
+              borderRadius: 8,
+              border: 'none',
+              background: 'transparent',
+              color: '#B23A34',
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer',
+              textAlign: 'left',
+            }}
+          >
+            <LogOut size={14} />
+            <span>Sign out</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Top bar — transparent, shrinks on scroll, houses profile menu      */
 /* ------------------------------------------------------------------ */
 
-function TopBar({ screen, setScreen, onOpenSettings, onSignOut, onAddEntry }) {
+function TopBar({
+  screen,
+  setScreen,
+  onOpenSettings,
+  onSignOut,
+  onAddEntry,
+  profile,
+  profiles = [],
+  trashCount = 0,
+  onSwitchProfile,
+}) {
   const C = useColors();
   const [scrolled, setScrolled] = useState(false);
   useEffect(() => {
@@ -5977,7 +6840,14 @@ function TopBar({ screen, setScreen, onOpenSettings, onSignOut, onAddEntry }) {
           })}
         </div>
         <div className="vlf-topbar-right">
-          <ProfileMenu onOpenSettings={onOpenSettings} onSignOut={onSignOut} />
+          <ProfileMenu
+            profile={profile}
+            profiles={profiles}
+            trashCount={trashCount}
+            onOpenSettings={onOpenSettings}
+            onSwitchProfile={onSwitchProfile}
+            onSignOut={onSignOut}
+          />
         </div>
       </div>
     </div>
@@ -5988,6 +6858,10 @@ export default function App() {
   const [session, setSession] = useState(undefined);
   const [entries, setEntries] = useState([]);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [profiles, setProfiles] = useState(DEFAULT_PROFILES);
+  const [activeProfileId, setActiveProfileId] = useState('default');
+  const [trashEntries, setTrashEntries] = useState([]);
+  const [settingsTab, setSettingsTab] = useState('workspace');
   const [reminders, setReminders] = useState([]);
   const [reminderSheetOpen, setReminderSheetOpen] = useState(false);
   const [editingReminder, setEditingReminder] = useState(null);
@@ -6072,6 +6946,47 @@ export default function App() {
       setSettings(current);
       setTotalDisplay(current.displayCurrency);
 
+      // Load saved workspaces / profiles & trash
+      let loadedProfiles = DEFAULT_PROFILES;
+      let loadedActiveId = 'default';
+      let loadedTrash = [];
+      try {
+        const localProfiles = localStorage.getItem(`vaultify_profiles_${uidVal}`);
+        if (localProfiles) {
+          loadedProfiles = JSON.parse(localProfiles);
+        } else if (settingsRow?.budget_limits?.profiles) {
+          loadedProfiles = settingsRow.budget_limits.profiles;
+        }
+
+        const localActive = localStorage.getItem(`vaultify_active_profile_${uidVal}`);
+        if (localActive) {
+          loadedActiveId = localActive;
+        } else if (settingsRow?.budget_limits?.active_profile_id) {
+          loadedActiveId = settingsRow.budget_limits.active_profile_id;
+        }
+
+        const localTrash = localStorage.getItem(`vaultify_trash_${uidVal}`);
+        if (localTrash) {
+          loadedTrash = JSON.parse(localTrash);
+        } else if (settingsRow?.budget_limits?.trash) {
+          loadedTrash = settingsRow.budget_limits.trash;
+        }
+      } catch (err) {
+        console.error('Error loading profiles & trash:', err);
+      }
+
+      // Auto-purge trash entries older than 3 days
+      const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+      const now = Date.now();
+      const validTrash = (loadedTrash || []).filter((e) => {
+        const delTime = e.deletedAtMs || (e.deletedAt ? new Date(e.deletedAt).getTime() : now);
+        return now - delTime <= THREE_DAYS_MS;
+      });
+
+      setProfiles(loadedProfiles);
+      setActiveProfileId(loadedActiveId);
+      setTrashEntries(validTrash);
+
       // Load saved reminders
       try {
         const localReminders = localStorage.getItem(`vaultify_reminders_${uidVal}`);
@@ -6105,6 +7020,115 @@ export default function App() {
       }
     })();
   }, [session, refreshRates]);
+
+  // Derived Active Profile & Enabled Currencies
+  const activeProfile = useMemo(() => {
+    return profiles.find((p) => p.id === activeProfileId) || profiles[0] || DEFAULT_PROFILES[0];
+  }, [profiles, activeProfileId]);
+
+  const activeCurrencies = useMemo(() => {
+    return (activeProfile?.enabledCurrencies && activeProfile.enabledCurrencies.length > 0)
+      ? activeProfile.enabledCurrencies
+      : CURRENCIES;
+  }, [activeProfile]);
+
+  // Fallback active currency if disabled
+  useEffect(() => {
+    if (activeCurrencies && activeCurrencies.length > 0) {
+      if (!activeCurrencies.includes(activeCurrency)) {
+        setActiveCurrency(activeCurrencies[0]);
+      }
+      if (!activeCurrencies.includes(totalDisplay)) {
+        setTotalDisplay(activeCurrencies[0]);
+      }
+      if (historyCurrency !== 'All' && !activeCurrencies.includes(historyCurrency)) {
+        setHistoryCurrency('All');
+      }
+    }
+  }, [activeCurrencies, activeCurrency, totalDisplay, historyCurrency]);
+
+  const persistProfiles = useCallback(async (nextProfiles, nextActiveId) => {
+    setProfiles(nextProfiles);
+    const actId = nextActiveId || activeProfileId;
+    if (nextActiveId) setActiveProfileId(nextActiveId);
+    if (session?.user?.id) {
+      const uidVal = session.user.id;
+      try {
+        localStorage.setItem(`vaultify_profiles_${uidVal}`, JSON.stringify(nextProfiles));
+        localStorage.setItem(`vaultify_active_profile_${uidVal}`, actId);
+      } catch (err) {
+        console.error('Error saving profiles to localStorage:', err);
+      }
+      try {
+        const currentLimits = settings.budgetLimits || {};
+        await supabase.from('settings').upsert({
+          user_id: uidVal,
+          budget_limits: { ...currentLimits, profiles: nextProfiles, active_profile_id: actId },
+          updated_at: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error('Error saving profiles to Supabase:', err);
+      }
+    }
+  }, [session, activeProfileId, settings]);
+
+  const persistTrash = useCallback(async (nextTrash) => {
+    setTrashEntries(nextTrash);
+    if (session?.user?.id) {
+      const uidVal = session.user.id;
+      try {
+        localStorage.setItem(`vaultify_trash_${uidVal}`, JSON.stringify(nextTrash));
+      } catch (err) {
+        console.error('Error saving trash to localStorage:', err);
+      }
+      try {
+        const currentLimits = settings.budgetLimits || {};
+        await supabase.from('settings').upsert({
+          user_id: uidVal,
+          budget_limits: { ...currentLimits, trash: nextTrash },
+          updated_at: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error('Error saving trash to Supabase:', err);
+      }
+    }
+  }, [session, settings]);
+
+  const handleUpdateProfile = (updatedProfile) => {
+    const next = profiles.map((p) => (p.id === updatedProfile.id ? updatedProfile : p));
+    persistProfiles(next, activeProfileId);
+    setShowStamp(true);
+    setTimeout(() => setShowStamp(false), 900);
+  };
+
+  const handleCreateProfile = (name) => {
+    const newP = {
+      id: uid(),
+      name: name.trim(),
+      avatar: null,
+      enabledCurrencies: ['PKR', 'TRY', 'USD', 'EUR', 'GBP', 'USDT'],
+    };
+    const next = [...profiles, newP];
+    persistProfiles(next, newP.id);
+    setShowStamp(true);
+    setTimeout(() => setShowStamp(false), 900);
+  };
+
+  const handleDeleteProfile = (profileId) => {
+    if (profiles.length <= 1) return;
+    const next = profiles.filter((p) => p.id !== profileId);
+    const nextActive = activeProfileId === profileId ? next[0].id : activeProfileId;
+    persistProfiles(next, nextActive);
+  };
+
+  const handleSwitchProfile = (profileId) => {
+    setActiveProfileId(profileId);
+    if (session?.user?.id) {
+      try {
+        localStorage.setItem(`vaultify_active_profile_${session.user.id}`, profileId);
+      } catch (e) {}
+    }
+  };
 
   const persistSettings = useCallback(async (next) => {
     setSettings(next);
@@ -6381,10 +7405,48 @@ export default function App() {
   };
 
   const handleDeleteEntry = async (id) => {
+    const target = entries.find((e) => e.id === id);
+    if (target) {
+      const trashItem = {
+        ...target,
+        deletedAt: new Date().toISOString(),
+        deletedAtMs: Date.now(),
+      };
+      const nextTrash = [trashItem, ...trashEntries];
+      persistTrash(nextTrash);
+    }
     await supabase.from('entries').delete().eq('id', id);
     setEntries((prev) => prev.filter((e) => e.id !== id));
     setSheetOpen(false);
     setEditingEntry(null);
+  };
+
+  const handleRestoreTrash = async (id) => {
+    const target = trashEntries.find((e) => e.id === id);
+    if (!target || !session) return;
+    const { deletedAt, deletedAtMs, ...cleanEntry } = target;
+    const uidVal = session.user.id;
+    try {
+      const dbPayload = entryToDb(cleanEntry);
+      dbPayload.user_id = uidVal;
+      await supabase.from('entries').insert(dbPayload);
+      setEntries((prev) => [cleanEntry, ...prev]);
+      const nextTrash = trashEntries.filter((e) => e.id !== id);
+      persistTrash(nextTrash);
+      setShowStamp(true);
+      setTimeout(() => setShowStamp(false), 900);
+    } catch (err) {
+      console.error('Error restoring entry from trash:', err);
+    }
+  };
+
+  const handleDeleteTrashPermanent = (id) => {
+    const nextTrash = trashEntries.filter((e) => e.id !== id);
+    persistTrash(nextTrash);
+  };
+
+  const handleEmptyTrash = () => {
+    persistTrash([]);
   };
 
   const theme = settings.theme || 'light';
@@ -6423,7 +7485,14 @@ export default function App() {
           <TopBar
             screen={screen}
             setScreen={setScreen}
-            onOpenSettings={() => setSettingsOpen(true)}
+            profile={activeProfile}
+            profiles={profiles}
+            trashCount={trashEntries.length}
+            onOpenSettings={(tab = 'workspace') => {
+              setSettingsTab(tab);
+              setSettingsOpen(true);
+            }}
+            onSwitchProfile={handleSwitchProfile}
             onSignOut={async () => { await supabase.auth.signOut(); }}
             onAddEntry={() => { setEditingEntry(null); setSheetOpen(true); }}
           />
@@ -6464,6 +7533,7 @@ export default function App() {
               <Dashboard
                 entries={entries}
                 settings={settings}
+                currencies={activeCurrencies}
                 activeCurrency={activeCurrency}
                 setActiveCurrency={setActiveCurrency}
                 totalDisplay={totalDisplay}
@@ -6497,6 +7567,7 @@ export default function App() {
               <HistoryScreen
                 entries={entries}
                 settings={settings}
+                currencies={activeCurrencies}
                 initialCurrency={historyCurrency}
                 onCurrencyChange={setHistoryCurrency}
                 onEdit={(e) => requestPassword(() => { setEditingEntry(e); setSheetOpen(true); })}
@@ -6506,6 +7577,7 @@ export default function App() {
               <NetWorthScreen
                 entries={entries}
                 settings={settings}
+                currencies={activeCurrencies}
                 onNavigateToHistory={(curr) => {
                   setHistoryCurrency(curr || 'All');
                   setScreen('history');
@@ -6516,6 +7588,7 @@ export default function App() {
             {screen === 'calculator' && (
               <CalculatorScreen
                 settings={settings}
+                currencies={activeCurrencies}
                 onSaveEntry={handleSaveEntry}
                 onOpenAddEntry={(initialData) => {
                   setEditingEntry(initialData);
@@ -6559,7 +7632,16 @@ export default function App() {
             })}
           </div>
 
-          <EntrySheet open={sheetOpen} onClose={() => { setSheetOpen(false); setEditingEntry(null); }} onSave={handleSaveEntry} onDelete={(id) => requestPassword(() => handleDeleteEntry(id))} settings={settings} initial={editingEntry} saving={saving} />
+          <EntrySheet
+            open={sheetOpen}
+            onClose={() => { setSheetOpen(false); setEditingEntry(null); }}
+            onSave={handleSaveEntry}
+            onDelete={(id) => requestPassword(() => handleDeleteEntry(id))}
+            settings={settings}
+            currencies={activeCurrencies}
+            initial={editingEntry}
+            saving={saving}
+          />
           <ReminderSheet
             open={reminderSheetOpen}
             onClose={() => { setReminderSheetOpen(false); setEditingReminder(null); }}
@@ -6578,6 +7660,7 @@ export default function App() {
             exchanges={exchanges}
             settings={settings}
             entries={entries}
+            currencies={activeCurrencies}
           />
           <SettingsSheet
             open={settingsOpen}
@@ -6593,6 +7676,17 @@ export default function App() {
             entries={entries}
             onClearMonth={(key) => requestPassword(() => handleClearMonth(key))}
             onClearAll={() => requestPassword(handleClearAll)}
+            profile={activeProfile}
+            profiles={profiles}
+            onUpdateProfile={handleUpdateProfile}
+            onCreateProfile={handleCreateProfile}
+            onDeleteProfile={handleDeleteProfile}
+            onSwitchProfile={handleSwitchProfile}
+            trashEntries={trashEntries}
+            onRestoreTrash={handleRestoreTrash}
+            onDeleteTrashPermanent={handleDeleteTrashPermanent}
+            onEmptyTrash={handleEmptyTrash}
+            initialTab={settingsTab}
           />
           <PasswordGate open={!!pwGate} onClose={() => setPwGate(null)} userEmail={session.user.email}
             onConfirm={() => { const fn = pwGate; setPwGate(null); if (fn) fn(); }} />
