@@ -6,11 +6,15 @@ import {
   Wallet, UserCircle, Sun, Moon, KeyRound, Mail, Calculator as CalculatorIcon,
   ArrowRightLeft, Copy, CheckCheck, ArrowUpDown, AlertTriangle, ExternalLink,
   HelpCircle, Search, Bell, Calendar, Clock, CheckCircle2, ListTodo, Trash2,
-  Camera, RotateCcw, Trash, Layers, Eye, EyeOff, Image, UserPlus, Upload,
-  Sliders, Undo2, Sparkles, FolderPlus,
+  Camera, RotateCcw, RotateCw, ZoomIn, ZoomOut, Move, Crop, Trash, Layers, Eye, EyeOff, Image, UserPlus, Upload,
+  Sliders, Undo2, Sparkles, FolderPlus, BookOpen, UploadCloud, Info,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from './supabaseClient';
+import { ImportSheetModal } from './components/ImportSheetModal';
+import { DisclaimerGuide } from './components/DisclaimerGuide';
+import { OnboardingWizard } from './components/OnboardingWizard';
+import { SplashScreen } from './components/SplashScreen';
 
 /* ------------------------------------------------------------------ */
 /* Design tokens                                                      */
@@ -256,26 +260,56 @@ function Card({ children, style, hover = true }) {
 /* Auth screen                                                        */
 /* ------------------------------------------------------------------ */
 
-function AuthScreen() {
+function AuthScreen({ onSignedUp }) {
   const C = useColors();
   const [mode, setMode] = useState('signin');
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [info, setInfo] = useState('');
 
   const submit = async (e) => {
     e.preventDefault();
-    setError(''); setInfo(''); setLoading(true);
+    setError(''); setInfo('');
+
+    if (mode === 'signup') {
+      if (password.length < 6) {
+        setError('Password must be at least 6 characters.');
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError('Passwords do not match. Please re-enter your password.');
+        return;
+      }
+    }
+
+    setLoading(true);
     try {
       if (mode === 'signin') {
         const { error: err } = await supabase.auth.signInWithPassword({ email, password });
         if (err) throw err;
       } else if (mode === 'signup') {
-        const { error: err } = await supabase.auth.signUp({ email, password });
+        const { data, error: err } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              full_name: name.trim() || 'Vault User',
+              name: name.trim() || 'Vault User',
+            },
+          },
+        });
         if (err) throw err;
-        setInfo('Account created. If email confirmation is enabled in your Supabase project, check your inbox before signing in.');
+        if (name.trim()) {
+          localStorage.setItem('vaultify_temp_signup_name', name.trim());
+        }
+        if (onSignedUp) onSignedUp(name.trim());
+        setInfo('Account created! If email confirmation is enabled in your project, check your inbox. Otherwise you will be logged in.');
       } else if (mode === 'forgot') {
         const { error: err } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
         if (err) throw err;
@@ -290,22 +324,22 @@ function AuthScreen() {
 
   return (
     <div style={{ minHeight: '100vh', background: `linear-gradient(180deg, ${C.navy} 0%, ${C.navySoft} 45%, ${C.ice} 45%)`, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, fontFamily: SANS }}>
-      <div style={{ width: '100%', maxWidth: 380 }}>
-        <div style={{ textAlign: 'center', marginBottom: 26, color: '#fff' }}>
-          <div style={{ width: 52, height: 52, margin: '0 auto 12px', borderRadius: 16, background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <ShieldCheck size={24} color="#fff" />
+      <div style={{ width: '100%', maxWidth: 390 }}>
+        <div style={{ textAlign: 'center', marginBottom: 24, color: '#fff' }}>
+          <div style={{ width: 54, height: 54, margin: '0 auto 12px', borderRadius: 18, background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}>
+            <ShieldCheck size={26} color="#fff" />
           </div>
-          <div style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 600, letterSpacing: '0.01em' }}>Vaultify</div>
-          <div style={{ fontSize: 12.5, opacity: 0.75, marginTop: 4 }}>Private, multi-currency net worth tracking</div>
+          <div style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 700, letterSpacing: '0.01em' }}>Vaultify</div>
+          <div style={{ fontSize: 12.5, opacity: 0.8, marginTop: 4 }}>Private, multi-currency net worth tracking</div>
         </div>
-        <Card style={{ padding: 22 }}>
+        <Card style={{ padding: 22, boxShadow: '0 12px 36px rgba(20,17,13,0.18)' }}>
           {mode !== 'forgot' && (
             <div style={{ display: 'flex', gap: 6, marginBottom: 18, background: C.ice, padding: 4, borderRadius: 12 }}>
               {['signin', 'signup'].map((m) => (
                 <button key={m} onClick={() => { setMode(m); setError(''); setInfo(''); }} style={{
                   flex: 1, padding: '9px 0', borderRadius: 9, border: 'none', fontSize: 13, fontWeight: 700,
                   background: mode === m ? '#fff' : 'transparent', color: mode === m ? C.navy : C.muted,
-                  boxShadow: mode === m ? '0 1px 3px rgba(26,23,18,0.12)' : 'none',
+                  boxShadow: mode === m ? '0 1px 3px rgba(26,23,18,0.12)' : 'none', cursor: 'pointer',
                 }}>
                   {m === 'signin' ? 'Sign in' : 'Create account'}
                 </button>
@@ -319,42 +353,109 @@ function AuthScreen() {
             </div>
           )}
           <form onSubmit={submit}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: C.navySoft, display: 'block', marginBottom: 6 }}>Email</label>
-            <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
-              style={{ width: '100%', border: `1px solid ${C.line}`, borderRadius: 10, padding: '11px 13px', fontSize: 14, marginBottom: 14, outline: 'none', fontFamily: SANS }} />
-            {mode !== 'forgot' && (
-              <>
-                <label style={{ fontSize: 12, fontWeight: 600, color: C.navySoft, display: 'block', marginBottom: 6 }}>Password</label>
-                <input type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)}
-                  style={{ width: '100%', border: `1px solid ${C.line}`, borderRadius: 10, padding: '11px 13px', fontSize: 14, marginBottom: 10, outline: 'none', fontFamily: SANS }} />
-              </>
+            {mode === 'signup' && (
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: C.navySoft, display: 'block', marginBottom: 5 }}>Full Name</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Haseeb"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  style={{ width: '100%', border: `1px solid ${C.line}`, borderRadius: 10, padding: '11px 13px', fontSize: 14, outline: 'none', fontFamily: SANS, background: C.surface, color: C.navySoft, boxSizing: 'border-box' }}
+                />
+              </div>
             )}
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: C.navySoft, display: 'block', marginBottom: 5 }}>Email</label>
+              <input
+                type="email"
+                required
+                placeholder="you@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                style={{ width: '100%', border: `1px solid ${C.line}`, borderRadius: 10, padding: '11px 13px', fontSize: 14, outline: 'none', fontFamily: SANS, background: C.surface, color: C.navySoft, boxSizing: 'border-box' }}
+              />
+            </div>
+
+            {mode !== 'forgot' && (
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: C.navySoft, display: 'block', marginBottom: 5 }}>Password</label>
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    minLength={6}
+                    placeholder="Min 6 characters"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    style={{ width: '100%', border: `1px solid ${C.line}`, borderRadius: 10, padding: '11px 40px 11px 13px', fontSize: 14, outline: 'none', fontFamily: SANS, background: C.surface, color: C.navySoft, boxSizing: 'border-box' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    style={{ position: 'absolute', right: 10, background: 'none', border: 'none', color: C.muted, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 4 }}
+                    title={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {mode === 'signup' && (
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: C.navySoft, display: 'block', marginBottom: 5 }}>Re-enter Password</label>
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                  <input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    required
+                    minLength={6}
+                    placeholder="Repeat your password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    style={{ width: '100%', border: `1px solid ${C.line}`, borderRadius: 10, padding: '11px 40px 11px 13px', fontSize: 14, outline: 'none', fontFamily: SANS, background: C.surface, color: C.navySoft, boxSizing: 'border-box' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword((v) => !v)}
+                    style={{ position: 'absolute', right: 10, background: 'none', border: 'none', color: C.muted, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 4 }}
+                    title={showConfirmPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {mode === 'signin' && (
-              <div style={{ textAlign: 'right', marginBottom: 8 }}>
+              <div style={{ textAlign: 'right', marginBottom: 12 }}>
                 <button type="button" onClick={() => { setMode('forgot'); setError(''); setInfo(''); }}
                   style={{ background: 'none', border: 'none', color: C.steel, fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: 0 }}>
                   Forgot password?
                 </button>
               </div>
             )}
-            {error && <div style={{ fontSize: 12.5, color: '#7A2E2E', marginBottom: 12 }}>{error}</div>}
-            {info && <div style={{ fontSize: 12.5, color: '#39604A', marginBottom: 12 }}>{info}</div>}
+            {error && <div style={{ fontSize: 12.5, color: '#7A2E2E', marginBottom: 12, background: '#7A2E2E10', padding: '8px 12px', borderRadius: 8 }}>{error}</div>}
+            {info && <div style={{ fontSize: 12.5, color: '#39604A', marginBottom: 12, background: '#39604A10', padding: '8px 12px', borderRadius: 8 }}>{info}</div>}
             <button type="submit" disabled={loading} style={{
               width: '100%', padding: '13px', borderRadius: 12, border: 'none', background: C.navy, color: '#fff',
-              fontSize: 14.5, fontWeight: 700, opacity: loading ? 0.7 : 1,
+              fontSize: 14.5, fontWeight: 700, opacity: loading ? 0.7 : 1, cursor: 'pointer',
+              boxShadow: '0 4px 14px rgba(20,17,13,0.15)',
             }}>
               {loading ? 'Please wait…' : mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Send reset link'}
             </button>
             {mode === 'forgot' && (
               <button type="button" onClick={() => { setMode('signin'); setError(''); setInfo(''); }}
-                style={{ width: '100%', padding: '11px', borderRadius: 12, border: 'none', background: 'none', color: C.muted, fontSize: 12.5, fontWeight: 600, marginTop: 8 }}>
+                style={{ width: '100%', padding: '11px', borderRadius: 12, border: 'none', background: 'none', color: C.muted, fontSize: 12.5, fontWeight: 600, marginTop: 8, cursor: 'pointer' }}>
                 Back to sign in
               </button>
             )}
           </form>
         </Card>
-        <div style={{ textAlign: 'center', fontSize: 11.5, color: C.navySoft, opacity: 0.6, marginTop: 16 }}>
-          Same account, same data — on your phone and your laptop.
+        <div style={{ textAlign: 'center', fontSize: 11.5, color: C.navySoft, opacity: 0.7, marginTop: 16 }}>
+          Encrypted, private, and synced across all your devices.
         </div>
       </div>
     </div>
@@ -577,6 +678,284 @@ function PasswordGate({ open, onClose, onConfirm, userEmail }) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Avatar Crop & Adjust Modal (Zoom 0.3x-3x, Pan, Rotate, Fit Full)   */
+/* ------------------------------------------------------------------ */
+
+function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
+  const C = useColors();
+  const [zoom, setZoom] = useState(1);
+  const [panX, setPanX] = useState(0);
+  const [panY, setPanY] = useState(0);
+  const [rotation, setRotation] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const [imgDims, setImgDims] = useState({ width: 200, height: 200, aspect: 1 });
+  const dragStartRef = useRef({ x: 0, y: 0 });
+  const panStartRef = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    if (open && imageSrc) {
+      const img = new window.Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        const aspect = (img.naturalWidth || img.width || 1) / (img.naturalHeight || img.height || 1);
+        setImgDims({
+          width: img.naturalWidth || img.width,
+          height: img.naturalHeight || img.height,
+          aspect,
+        });
+        // Default to a comfortable fit without cutting off portrait/tall images
+        setZoom(1);
+        setPanX(0);
+        setPanY(0);
+        setRotation(0);
+        setIsDragging(false);
+      };
+      img.src = imageSrc;
+    }
+  }, [open, imageSrc]);
+
+  if (!open || !imageSrc) return null;
+
+  // Base preview size is 200px. Calculate base width/height to fit container
+  const previewSize = 200;
+  let baseW, baseH;
+  if (imgDims.aspect >= 1) {
+    // Landscape / square
+    baseW = previewSize;
+    baseH = previewSize / imgDims.aspect;
+  } else {
+    // Portrait / vertical phone photo (full height fits in circle so it's not overly zoomed)
+    baseH = previewSize;
+    baseW = previewSize * imgDims.aspect;
+  }
+
+  const handlePointerDown = (e) => {
+    setIsDragging(true);
+    const clientX = e.clientX ?? e.touches?.[0]?.clientX ?? 0;
+    const clientY = e.clientY ?? e.touches?.[0]?.clientY ?? 0;
+    dragStartRef.current = { x: clientX, y: clientY };
+    panStartRef.current = { x: panX, y: panY };
+  };
+
+  const handlePointerMove = (e) => {
+    if (!isDragging) return;
+    const clientX = e.clientX ?? e.touches?.[0]?.clientX ?? 0;
+    const clientY = e.clientY ?? e.touches?.[0]?.clientY ?? 0;
+    const dx = clientX - dragStartRef.current.x;
+    const dy = clientY - dragStartRef.current.y;
+    setPanX(panStartRef.current.x + dx);
+    setPanY(panStartRef.current.y + dy);
+  };
+
+  const handlePointerUp = () => {
+    setIsDragging(false);
+  };
+
+  const handleApply = () => {
+    const canvas = document.createElement('canvas');
+    const size = 400; // crisp standard resolution
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const img = new window.Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      ctx.clearRect(0, 0, size, size);
+
+      // Background fill for soft borders if zoomed out
+      ctx.fillStyle = '#1c222c';
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.save();
+      // Circular clip path for crisp avatar
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+      ctx.clip();
+
+      // Center and rotate
+      ctx.translate(size / 2, size / 2);
+      ctx.rotate((rotation * Math.PI) / 180);
+
+      // Exact 2x multiplier from 200px preview to 400px canvas
+      const scaleMultiplier = size / previewSize;
+      const drawW = baseW * scaleMultiplier * zoom;
+      const drawH = baseH * scaleMultiplier * zoom;
+      const finalPanX = panX * scaleMultiplier;
+      const finalPanY = panY * scaleMultiplier;
+
+      ctx.drawImage(img, -drawW / 2 + finalPanX, -drawH / 2 + finalPanY, drawW, drawH);
+      ctx.restore();
+
+      const result = canvas.toDataURL('image/jpeg', 0.90);
+      onSave(result);
+      onClose();
+    };
+    img.src = imageSrc;
+  };
+
+  // Quick preset calculations
+  const coverZoom = imgDims.aspect >= 1 ? imgDims.aspect : (1 / imgDims.aspect);
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, zIndex: 70, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(20,17,13,0.7)', backdropFilter: 'blur(5px)', padding: 16 }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: C.surface, width: '100%', maxWidth: 420, borderRadius: 22,
+          padding: '20px 22px', boxShadow: '0 20px 48px rgba(0,0,0,0.35)', fontFamily: SANS,
+          display: 'flex', flexDirection: 'column', gap: 14, border: `1px solid ${C.line}`,
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: C.heading, fontFamily: SERIF }}>Adjust Profile Photo</h3>
+            <p style={{ margin: '2px 0 0', fontSize: 11.5, color: C.muted }}>Zoom in/out or drag to fit full portrait/photo</p>
+          </div>
+          <button onClick={onClose} style={{ background: C.ice, border: 'none', borderRadius: '50%', width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+            <X size={15} color={C.heading} />
+          </button>
+        </div>
+
+        {/* Interactive Circular Viewport */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+          <div
+            onMouseDown={handlePointerDown}
+            onMouseMove={handlePointerMove}
+            onMouseUp={handlePointerUp}
+            onMouseLeave={handlePointerUp}
+            onTouchStart={handlePointerDown}
+            onTouchMove={handlePointerMove}
+            onTouchEnd={handlePointerUp}
+            style={{
+              width: previewSize, height: previewSize, borderRadius: '50%', overflow: 'hidden',
+              position: 'relative', border: `3px solid ${C.navy}`,
+              boxShadow: '0 8px 24px rgba(0,0,0,0.25)', background: '#1c222c',
+              cursor: isDragging ? 'grabbing' : 'grab', userSelect: 'none', touchAction: 'none',
+            }}
+          >
+            <img
+              src={imageSrc}
+              alt="Adjustment preview"
+              draggable={false}
+              style={{
+                position: 'absolute', top: '50%', left: '50%',
+                width: `${baseW}px`, height: `${baseH}px`,
+                transform: `translate(calc(-50% + ${panX}px), calc(-50% + ${panY}px)) scale(${zoom}) rotate(${rotation}deg)`,
+                userSelect: 'none', pointerEvents: 'none',
+                maxWidth: 'none', maxHeight: 'none',
+              }}
+            />
+            {/* Guide circle ring */}
+            <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', border: '1.5px dashed rgba(255,255,255,0.45)', pointerEvents: 'none' }} />
+          </div>
+          <span style={{ fontSize: 11, color: C.steel, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <Move size={12} /> Drag photo to pan & align
+          </span>
+        </div>
+
+        {/* Zoom Slider (Expanded from 0.3x to 3.0x) */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: C.ice, padding: '12px 14px', borderRadius: 14, border: `1px solid ${C.line}` }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700, color: C.heading }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><ZoomIn size={13} color={C.navy} /> Scale / Zoom</span>
+            <span style={{ color: C.navy, fontWeight: 800 }}>{Math.round(zoom * 100)}%</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => setZoom((z) => Math.max(0.3, +(z - 0.1).toFixed(2)))}
+              style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${C.line}`, background: C.surface, color: C.navy, fontWeight: 800, cursor: 'pointer' }}
+            >
+              -
+            </button>
+            <input
+              type="range"
+              min="0.3"
+              max="3"
+              step="0.02"
+              value={zoom}
+              onChange={(e) => setZoom(parseFloat(e.target.value))}
+              style={{ flex: 1, accentColor: C.navy, cursor: 'pointer' }}
+            >
+            </input>
+            <button
+              type="button"
+              onClick={() => setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2)))}
+              style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${C.line}`, background: C.surface, color: C.navy, fontWeight: 800, cursor: 'pointer' }}
+            >
+              +
+            </button>
+          </div>
+        </div>
+
+        {/* Alignment & Dimension Presets */}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
+          <button
+            type="button"
+            onClick={() => { setPanX(0); setPanY(0); setZoom(1); }}
+            style={{ padding: '7px 11px', borderRadius: 8, border: `1.5px solid ${zoom === 1 ? C.navy : C.line}`, background: zoom === 1 ? `${C.navy}10` : C.ice, fontSize: 11.5, fontWeight: 700, color: C.navySoft, cursor: 'pointer' }}
+          >
+            🖼️ Fit Full Photo
+          </button>
+          <button
+            type="button"
+            onClick={() => { setPanX(0); setPanY(0); setZoom(+(coverZoom).toFixed(2)); }}
+            style={{ padding: '7px 11px', borderRadius: 8, border: `1.5px solid ${Math.abs(zoom - coverZoom) < 0.05 ? C.navy : C.line}`, background: Math.abs(zoom - coverZoom) < 0.05 ? `${C.navy}10` : C.ice, fontSize: 11.5, fontWeight: 700, color: C.navySoft, cursor: 'pointer' }}
+          >
+            🔍 Fill Circle
+          </button>
+          <button
+            type="button"
+            onClick={() => { setPanX(0); setPanY(25); setZoom(Math.max(1.1, +(coverZoom * 1.1).toFixed(2))); }}
+            style={{ padding: '7px 11px', borderRadius: 8, border: `1px solid ${C.line}`, background: C.ice, fontSize: 11.5, fontWeight: 700, color: C.navySoft, cursor: 'pointer' }}
+          >
+            👤 Focus Face
+          </button>
+          <button
+            type="button"
+            onClick={() => setRotation((r) => (r + 90) % 360)}
+            style={{ padding: '7px 11px', borderRadius: 8, border: `1px solid ${C.line}`, background: C.ice, fontSize: 11.5, fontWeight: 700, color: C.navySoft, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+          >
+            <RotateCw size={12} /> Rotate 90°
+          </button>
+          <button
+            type="button"
+            onClick={() => { setPanX(0); setPanY(0); setZoom(1); setRotation(0); }}
+            style={{ padding: '7px 11px', borderRadius: 8, border: `1px solid ${C.line}`, background: C.ice, fontSize: 11.5, fontWeight: 700, color: C.muted, cursor: 'pointer' }}
+          >
+            Reset
+          </button>
+        </div>
+
+        {/* Action Buttons */}
+        <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ flex: 1, padding: '11px', borderRadius: 12, border: `1px solid ${C.line}`, background: C.ice, color: C.navySoft, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleApply}
+            style={{ flex: 1, padding: '11px', borderRadius: 12, border: 'none', background: C.navy, color: '#fff', fontSize: 13, fontWeight: 800, cursor: 'pointer', boxShadow: '0 4px 12px rgba(20,17,13,0.18)' }}
+          >
+            Apply & Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Settings Sheet                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -605,6 +984,9 @@ function SettingsSheet({
   onDeleteTrashPermanent,
   onEmptyTrash,
   initialTab = 'workspace',
+  onOpenImport,
+  requestPassword,
+  onRerunOnboarding,
 }) {
   const C = useColors();
   const [activeTab, setActiveTab] = useState(initialTab || 'workspace');
@@ -620,6 +1002,7 @@ function SettingsSheet({
   const [enabledCurrencies, setEnabledCurrencies] = useState(profile?.enabledCurrencies || CURRENCIES);
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
   const [showAddWorkspace, setShowAddWorkspace] = useState(false);
+  const [adjustingImageSrc, setAdjustingImageSrc] = useState(null);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -659,18 +1042,43 @@ function SettingsSheet({
   const handleAvatarUpload = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      alert('Please select an image smaller than 5MB.');
+    if (file.size > 10 * 1024 * 1024) {
+      alert(`File size is ${(file.size / (1024 * 1024)).toFixed(1)}MB. Please select an image smaller than 10MB.`);
       return;
     }
     const reader = new FileReader();
     reader.onload = (event) => {
       const base64 = event.target?.result;
-      if (base64 && onUpdateProfile) {
-        onUpdateProfile({ ...profile, avatar: base64 });
+      if (base64) {
+        // Automatically resize large images before opening adjuster for smooth performance
+        const img = new window.Image();
+        img.onload = () => {
+          const maxDim = 1200;
+          if (img.width > maxDim || img.height > maxDim) {
+            const canvas = document.createElement('canvas');
+            let w = img.width;
+            let h = img.height;
+            if (w > h) {
+              h = (h / w) * maxDim;
+              w = maxDim;
+            } else {
+              w = (w / h) * maxDim;
+              h = maxDim;
+            }
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, w, h);
+            setAdjustingImageSrc(canvas.toDataURL('image/jpeg', 0.92));
+          } else {
+            setAdjustingImageSrc(base64);
+          }
+        };
+        img.src = base64;
       }
     };
     reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   const handleRemoveAvatar = () => {
@@ -731,6 +1139,7 @@ function SettingsSheet({
     { id: 'profile', label: 'Profile Photo', icon: Camera },
     { id: 'trash', label: `Trash (${validTrashEntries.length})`, icon: Trash2 },
     { id: 'general', label: 'General & Limits', icon: Settings },
+    { id: 'guide', label: '📖 Guide & Disclaimer', icon: BookOpen },
   ];
 
   return (
@@ -1001,6 +1410,20 @@ function SettingsSheet({
                 {profile?.avatar && (
                   <button
                     type="button"
+                    onClick={() => setAdjustingImageSrc(profile.avatar)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px',
+                      borderRadius: 12, border: `1px solid ${C.line}`, background: C.surface, color: C.navySoft,
+                      fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                    }}
+                  >
+                    <Crop size={14} /> Adjust / Zoom
+                  </button>
+                )}
+
+                {profile?.avatar && (
+                  <button
+                    type="button"
                     onClick={handleRemoveAvatar}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px',
@@ -1011,6 +1434,25 @@ function SettingsSheet({
                     <Trash2 size={14} /> Remove Photo
                   </button>
                 )}
+              </div>
+
+              {/* Photo Format & Dimension Limits Information */}
+              <div style={{
+                marginTop: 14, width: '92%', background: C.surface, borderRadius: 12,
+                padding: '10px 14px', border: `1px solid ${C.line}`, fontSize: 11.5,
+                color: C.muted, display: 'flex', flexDirection: 'column', gap: 4,
+              }}>
+                <div style={{ fontWeight: 800, color: C.heading, display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <ShieldCheck size={13} color={C.navy} /> Photo Guidelines & File Support
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
+                  <span>• <strong>Formats:</strong> JPG, PNG, WEBP, HEIC</span>
+                  <span>• <strong>Max Size:</strong> 10 MB</span>
+                  <span>• <strong>Dimensions:</strong> Any (Portrait, Landscape, Square)</span>
+                </div>
+                <span style={{ fontSize: 10.5, color: C.steel, marginTop: 2 }}>
+                  Normal camera photos & selfies automatically fit without cutting off. Use <strong>"Fit Full Photo"</strong> or zoom to adjust.
+                </span>
               </div>
             </div>
 
@@ -1242,6 +1684,50 @@ function SettingsSheet({
             </button>
 
             <div style={{ height: 16 }} />
+            <SectionLabel>Backup & Restore</SectionLabel>
+            <p style={{ fontSize: 12, color: C.muted, marginTop: -4, marginBottom: 10 }}>
+              Import existing sheet backups or re-run the initial onboarding configuration.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  if (requestPassword && onOpenImport) {
+                    requestPassword(() => onOpenImport());
+                  } else if (onOpenImport) {
+                    onOpenImport();
+                  }
+                }}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  padding: '12px 14px', borderRadius: 12, border: `1.5px dashed ${C.steel}`,
+                  background: `${C.steel}10`, color: C.navySoft, fontSize: 13, fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                <UploadCloud size={16} color={C.steel} /> Import Sheet (.xlsx / .csv)
+              </button>
+
+              {onRerunOnboarding && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onRerunOnboarding();
+                  }}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                    padding: '11px 14px', borderRadius: 12, border: `1px solid ${C.line}`,
+                    background: C.surface, color: C.muted, fontSize: 12.5, fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <Sparkles size={14} color={C.steel} /> Re-run Welcome Setup Wizard
+                </button>
+              )}
+            </div>
+
             <SectionLabel>Delete data</SectionLabel>
             <p style={{ fontSize: 12, color: C.muted, marginTop: -4, marginBottom: 12 }}>Clear a specific month, or wipe everything. This cannot be undone.</p>
             {months.length === 0 && <div style={{ fontSize: 12.5, color: C.muted, marginBottom: 12 }}>No entries yet.</div>}
@@ -1261,6 +1747,15 @@ function SettingsSheet({
                 Clear all data
               </button>
             )}
+          </div>
+        )}
+
+        {/* ============================================================ */}
+        {/* TAB 5: COMPREHENSIVE GUIDE & DISCLAIMER                      */}
+        {/* ============================================================ */}
+        {activeTab === 'guide' && (
+          <div style={{ marginTop: 6 }}>
+            <DisclaimerGuide colors={C} compact={true} />
           </div>
         )}
 
@@ -1284,6 +1779,18 @@ function SettingsSheet({
         }}>
           <LogOut size={14} /> Sign out
         </button>
+
+        {/* Interactive Photo Crop / Adjust Modal */}
+        <AvatarAdjustModal
+          open={!!adjustingImageSrc}
+          imageSrc={adjustingImageSrc}
+          onClose={() => setAdjustingImageSrc(null)}
+          onSave={(adjustedBase64) => {
+            if (onUpdateProfile) {
+              onUpdateProfile({ ...profile, avatar: adjustedBase64 });
+            }
+          }}
+        />
       </div>
     </div>
   );
@@ -3652,7 +4159,7 @@ function downloadWorkbook(wb, filename) {
   URL.revokeObjectURL(url);
 }
 
-function ReportScreen({ entries, reminders = [], requestPassword }) {
+function ReportScreen({ entries, reminders = [], requestPassword, onOpenImport }) {
   const C = useColors();
   const months = useMemo(() => {
     const set = new Set(entries.map((e) => monthKey(e.date)));
@@ -3831,6 +4338,17 @@ function ReportScreen({ entries, reminders = [], requestPassword }) {
         </button>
         <button onClick={() => requestPassword(exportAll)} style={{ display: 'flex', alignItems: 'center', gap: 10, background: C.surface, color: C.navy, border: `1.5px solid ${C.navy}`, borderRadius: 14, padding: '13px 16px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
           <Download size={17} /> Export Full History + Reminders (Sheet 2)
+        </button>
+        <button
+          type="button"
+          onClick={() => requestPassword(() => onOpenImport && onOpenImport())}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+            background: `${C.steel}10`, color: C.navySoft, border: `1.5px dashed ${C.steel}`,
+            borderRadius: 14, padding: '13px 16px', fontSize: 14, fontWeight: 700, cursor: 'pointer',
+          }}
+        >
+          <UploadCloud size={17} color={C.steel} /> Import Sheet (.xlsx / .csv)
         </button>
       </div>
     </div>
@@ -6882,6 +7400,12 @@ export default function App() {
   const [pwGate, setPwGate] = useState(null);
   const [limitWarning, setLimitWarning] = useState(null);
 
+  // New onboarding, import & splash animation states
+  const [splashDone, setSplashDone] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [justSignedUpName, setJustSignedUpName] = useState('');
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
@@ -7012,6 +7536,13 @@ export default function App() {
       }
 
       setDataLoaded(true);
+
+      // Check if user has completed initial onboarding setup
+      const onboardKey = `vaultify_onboarded_${uidVal}`;
+      const hasOnboarded = localStorage.getItem(onboardKey);
+      if (!hasOnboarded) {
+        setShowOnboarding(true);
+      }
 
       const isStale = !current.ratesFetchedAt || Date.now() - new Date(current.ratesFetchedAt).getTime() > 6 * 60 * 60 * 1000;
       if (isStale) {
@@ -7453,9 +7984,26 @@ export default function App() {
   const C = theme === 'dark' ? DARK_COLORS : LIGHT_COLORS;
 
   if (session === undefined) {
-    return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: LIGHT_COLORS.ice, fontFamily: SERIF, color: LIGHT_COLORS.navy, fontSize: 20 }}>Vaultify</div>;
+    return (
+      <>
+        {!splashDone && <SplashScreen onComplete={() => setSplashDone(true)} />}
+        <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: LIGHT_COLORS.ice, fontFamily: SERIF, color: LIGHT_COLORS.navy, fontSize: 20 }}>Vaultify</div>
+      </>
+    );
   }
-  if (!session) return <AuthScreen />;
+  if (!session) {
+    return (
+      <>
+        {!splashDone && <SplashScreen onComplete={() => setSplashDone(true)} />}
+        <AuthScreen
+          onSignedUp={(name) => {
+            setJustSignedUpName(name);
+            setShowOnboarding(true);
+          }}
+        />
+      </>
+    );
+  }
   if (!dataLoaded) {
     return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.ice, fontFamily: SERIF, color: C.heading, fontSize: 20 }}>Loading your vault…</div>;
   }
@@ -7465,6 +8013,80 @@ export default function App() {
   };
 
   const requestPassword = (action) => setPwGate(() => action);
+
+  const handleImportSheet = async ({ entries: importedEntries = [], reminders: importedReminders = [], mode = 'merge' }) => {
+    if (!session) return;
+    const uidVal = session.user.id;
+    setSaving(true);
+    try {
+      if (mode === 'replace') {
+        // Delete existing entries
+        await supabase.from('entries').delete().eq('user_id', uidVal);
+      }
+
+      // Convert imported entries to database rows
+      const dbRows = importedEntries.map((e) => {
+        const row = entryToDb(e);
+        row.user_id = uidVal;
+        row.rate_at_entry = e.currency !== 'PKR' ? (settings.rates[e.currency] ?? null) : null;
+        return row;
+      });
+
+      // Insert in chunks of 50 for database stability
+      const chunkSize = 50;
+      const allSaved = [];
+      for (let i = 0; i < dbRows.length; i += chunkSize) {
+        const chunk = dbRows.slice(i, i + chunkSize);
+        const { data, error } = await supabase.from('entries').insert(chunk).select();
+        if (!error && data) {
+          allSaved.push(...data.map(dbToEntry));
+        }
+      }
+
+      if (mode === 'replace') {
+        setEntries(allSaved);
+      } else {
+        setEntries((prev) => [...allSaved, ...prev]);
+      }
+
+      // Import reminders if present
+      if (importedReminders && importedReminders.length > 0) {
+        const updatedReminders = mode === 'replace'
+          ? importedReminders
+          : [...importedReminders, ...reminders];
+        persistReminders(updatedReminders);
+      }
+
+      setShowStamp(true);
+      setTimeout(() => setShowStamp(false), 1200);
+      setImportModalOpen(false);
+    } catch (err) {
+      console.error('Import error:', err);
+      alert('Failed to import sheet: ' + (err.message || 'Unknown error'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleOnboardingFinish = async ({ vaultName, theme: newTheme, currencies: newCurrencies }) => {
+    if (!session) return;
+    const uidVal = session.user.id;
+    localStorage.setItem(`vaultify_onboarded_${uidVal}`, 'true');
+    setShowOnboarding(false);
+
+    // Update active profile name & enabled currencies
+    const updatedProfile = {
+      ...activeProfile,
+      name: vaultName || activeProfile.name,
+      enabledCurrencies: newCurrencies || activeProfile.enabledCurrencies,
+    };
+    handleUpdateProfile(updatedProfile);
+
+    // Update theme if changed
+    if (newTheme && newTheme !== theme) {
+      handleThemeChange(newTheme);
+    }
+  };
 
   const handleClearMonth = async (key) => {
     const ids = entries.filter((e) => monthKey(e.date) === key).map((e) => e.id);
@@ -7584,7 +8206,14 @@ export default function App() {
                 }}
               />
             )}
-            {screen === 'report' && <ReportScreen entries={entries} reminders={reminders} requestPassword={requestPassword} />}
+            {screen === 'report' && (
+              <ReportScreen
+                entries={entries}
+                reminders={reminders}
+                requestPassword={requestPassword}
+                onOpenImport={() => setImportModalOpen(true)}
+              />
+            )}
             {screen === 'calculator' && (
               <CalculatorScreen
                 settings={settings}
@@ -7687,6 +8316,9 @@ export default function App() {
             onDeleteTrashPermanent={handleDeleteTrashPermanent}
             onEmptyTrash={handleEmptyTrash}
             initialTab={settingsTab}
+            onOpenImport={() => setImportModalOpen(true)}
+            requestPassword={requestPassword}
+            onRerunOnboarding={() => setShowOnboarding(true)}
           />
           <PasswordGate open={!!pwGate} onClose={() => setPwGate(null)} userEmail={session.user.email}
             onConfirm={() => { const fn = pwGate; setPwGate(null); if (fn) fn(); }} />
@@ -7706,6 +8338,44 @@ export default function App() {
             onNo={() => setLimitWarning(null)}
           />
           <SavedStamp show={showStamp} />
+
+          {/* Import Sheet Modal with Password Security */}
+          <ImportSheetModal
+            open={importModalOpen}
+            onClose={() => setImportModalOpen(false)}
+            userEmail={session?.user?.email}
+            onImport={handleImportSheet}
+            colors={C}
+          />
+
+          {/* Setup / Welcome Wizard */}
+          {showOnboarding && (
+            <OnboardingWizard
+              open={showOnboarding}
+              userName={
+                session?.user?.user_metadata?.name ||
+                session?.user?.user_metadata?.full_name ||
+                justSignedUpName ||
+                localStorage.getItem('vaultify_temp_signup_name') ||
+                session?.user?.email?.split('@')[0] ||
+                'User'
+              }
+              initialVaultName={activeProfile?.name || 'Personal Vault'}
+              initialTheme={theme}
+              initialCurrencies={activeProfile?.enabledCurrencies || CURRENCIES}
+              colors={C}
+              onFinish={handleOnboardingFinish}
+              onSkip={() => {
+                if (session?.user?.id) {
+                  localStorage.setItem(`vaultify_onboarded_${session.user.id}`, 'true');
+                }
+                setShowOnboarding(false);
+              }}
+            />
+          )}
+
+          {/* Initial Splash Animation */}
+          {!splashDone && <SplashScreen onComplete={() => setSplashDone(true)} />}
         </div>
       </div>
     </ThemeContext.Provider>
