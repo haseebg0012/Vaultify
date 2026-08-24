@@ -7,7 +7,7 @@ import {
   ArrowRightLeft, Copy, CheckCheck, ArrowUpDown, AlertTriangle, ExternalLink,
   HelpCircle, Search, Bell, Calendar, Clock, CheckCircle2, ListTodo, Trash2,
   Camera, RotateCcw, RotateCw, ZoomIn, ZoomOut, Move, Crop, Trash, Layers, Eye, EyeOff, Image, UserPlus, Upload,
-  Sliders, Undo2, Sparkles, FolderPlus,
+  Sliders, Undo2, Sparkles, FolderPlus, ArrowRight, Lock, Shuffle,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from './supabaseClient';
@@ -157,6 +157,29 @@ const fromBase = (baseAmount, currency, rates) => { const r = rates[currency] ||
 const dbToEntry = (r) => {
   const isUntrackedMarker = r.type === 'unaccounted' ||
     (r.type === 'expense' && (r.category?.toLowerCase().startsWith('untracked') || r.note?.includes('[Untracked]')));
+  
+  let rawNote = r.note || '';
+  let workspaceId = null;
+  const wsMatch = rawNote.match(/\[WS:([a-zA-Z0-9_\-]+)\]/);
+  if (wsMatch) {
+    workspaceId = wsMatch[1];
+    rawNote = rawNote.replace(/\[WS:[a-zA-Z0-9_\-]+\]\s*/g, '');
+  }
+
+  let crossTransfer = null;
+  const xferMatch = rawNote.match(/\[XFER:([^:\]]+):([^:\]]+):([^:\]]+)(?::([^:\]]+))?(?::([^:\]]+))?(?::([^:\]]+))?\]/);
+  if (xferMatch) {
+    crossTransfer = {
+      id: xferMatch[1],
+      sourceWorkspaceId: xferMatch[2],
+      targetWorkspaceId: xferMatch[3],
+      role: xferMatch[4] || 'transfer',
+      counterpartAmount: xferMatch[5] ? Number(xferMatch[5]) : null,
+      counterpartCurrency: xferMatch[6] || null,
+    };
+    rawNote = rawNote.replace(/\[XFER:[^\]]+\]\s*/g, '');
+  }
+
   return {
     id: r.id,
     type: isUntrackedMarker ? 'unaccounted' : r.type,
@@ -164,16 +187,40 @@ const dbToEntry = (r) => {
     currency: r.currency,
     category: r.category ? r.category.replace(/^Untracked:\s*/i, '') : '',
     holdingSource: r.holding_source || '',
-    note: r.note ? r.note.replace(/\[Untracked\]\s*/g, '').trim() : '',
+    note: rawNote.replace(/\[Untracked\]\s*/g, '').trim(),
     date: r.date,
     rateAtEntry: r.rate_at_entry != null ? Number(r.rate_at_entry) : null,
+    workspaceId: workspaceId || null,
+    crossTransfer: crossTransfer || null,
   };
 };
-const entryToDb = (e) => ({
-  type: e.type, amount: e.amount, currency: e.currency, category: e.category || null,
-  holding_source: e.type === 'expense' ? null : (e.holdingSource || null), note: e.note || null, date: e.date,
-  rate_at_entry: e.rateAtEntry != null ? e.rateAtEntry : null,
-});
+
+const entryToDb = (e) => {
+  let finalNote = e.note || '';
+  if (e.crossTransfer) {
+    const { id, sourceWorkspaceId, targetWorkspaceId, role, counterpartAmount, counterpartCurrency } = e.crossTransfer;
+    const xferTag = `[XFER:${id}:${sourceWorkspaceId}:${targetWorkspaceId}:${role || 'transfer'}:${counterpartAmount || ''}:${counterpartCurrency || ''}]`;
+    if (!finalNote.includes(xferTag)) {
+      finalNote = `${xferTag} ${finalNote}`.trim();
+    }
+  }
+  if (e.workspaceId) {
+    const wsTag = `[WS:${e.workspaceId}]`;
+    if (!finalNote.includes(wsTag)) {
+      finalNote = `${wsTag} ${finalNote}`.trim();
+    }
+  }
+  return {
+    type: e.type,
+    amount: e.amount,
+    currency: e.currency,
+    category: e.category || null,
+    holding_source: e.type === 'expense' ? null : (e.holdingSource || null),
+    note: finalNote || null,
+    date: e.date,
+    rate_at_entry: e.rateAtEntry != null ? e.rateAtEntry : null,
+  };
+};
 
 async function fetchLiveRates() {
   try {
@@ -3392,7 +3439,450 @@ function ProfileSheet({
 }
 
 /* ------------------------------------------------------------------ */
-/* Settings Sheet                                                     */
+/* Notifications & Alerts Sheet                                       */
+/* ------------------------------------------------------------------ */
+
+function NotificationsSheet({
+  open,
+  onClose,
+  entries = [],
+  settings = {},
+  reminders = [],
+  trashEntries = [],
+  profile,
+  onOpenSettings,
+  onOpenReminders,
+  onRefreshRates,
+  ratesLoading = false,
+  userEmail,
+}) {
+  const C = useColors();
+  const [activeTab, setActiveTab] = useState('alerts'); // 'alerts' | 'preferences'
+  const [readIds, setReadIds] = useState(() => {
+    try {
+      const saved = localStorage.getItem('vaultify_read_notifications');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+
+  const [notifPreferences, setNotifPreferences] = useState(() => {
+    try {
+      const saved = localStorage.getItem('vaultify_notif_prefs');
+      return saved ? JSON.parse(saved) : {
+        budgetAlerts: true,
+        reminderAlerts: true,
+        rateUpdates: true,
+        trashAlerts: true,
+      };
+    } catch (e) {
+      return { budgetAlerts: true, reminderAlerts: true, rateUpdates: true, trashAlerts: true };
+    }
+  });
+
+  const savePrefs = (next) => {
+    setNotifPreferences(next);
+    try {
+      localStorage.setItem('vaultify_notif_prefs', JSON.stringify(next));
+    } catch (e) {}
+  };
+
+  // Compile dynamic system alerts
+  const notifications = useMemo(() => {
+    const list = [];
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0, 10);
+
+    // 1. Budget limits alert
+    if (notifPreferences.budgetAlerts && settings.budgetLimits) {
+      const period = settings.budgetPeriod || settings.budgetLimits._period || 'week';
+      const periodName = period === 'week' ? 'Weekly' : period === 'month' ? 'Monthly' : 'Total';
+      
+      const relevant = (entries || []).filter((e) => {
+        if (e.type !== 'expense') return false;
+        if (!e.date) return false;
+        if (period === 'total') return true;
+        if (period === 'month') return e.date.startsWith(todayStr.slice(0, 7));
+        if (period === 'week') {
+          const d = new Date(e.date);
+          const diffDays = (now.getTime() - d.getTime()) / (1000 * 3600 * 24);
+          return diffDays >= 0 && diffDays <= 7;
+        }
+        return true;
+      });
+
+      const spentByCurr = {};
+      relevant.forEach((e) => {
+        spentByCurr[e.currency] = (spentByCurr[e.currency] || 0) + Number(e.amount || 0);
+      });
+
+      Object.entries(settings.budgetLimits).forEach(([curr, limitVal]) => {
+        if (curr === '_period' || !limitVal || isNaN(Number(limitVal))) return;
+        const limit = Number(limitVal);
+        const spent = spentByCurr[curr] || 0;
+        if (spent >= limit) {
+          list.push({
+            id: `limit_exceeded_${curr}`,
+            type: 'danger',
+            title: `Budget Exceeded (${curr})`,
+            description: `You've spent ${fmtMoney(spent, curr)} (${Math.round((spent / limit) * 100)}% of your ${periodName} ${fmtMoney(limit, curr)} budget).`,
+            actionLabel: 'Adjust Limits',
+            onAction: () => { onClose(); if (onOpenSettings) onOpenSettings('general'); },
+            time: 'Active Alert',
+          });
+        } else if (spent >= limit * 0.8) {
+          list.push({
+            id: `limit_near_${curr}`,
+            type: 'warning',
+            title: `Near Budget Cap (${curr})`,
+            description: `You've utilized ${Math.round((spent / limit) * 100)}% of your ${periodName} limit (${fmtMoney(spent, curr)} of ${fmtMoney(limit, curr)}).`,
+            actionLabel: 'View Limits',
+            onAction: () => { onClose(); if (onOpenSettings) onOpenSettings('general'); },
+            time: 'Active Alert',
+          });
+        }
+      });
+    }
+
+    // 2. Upcoming / Due Reminders
+    if (notifPreferences.reminderAlerts && reminders && reminders.length > 0) {
+      reminders.forEach((r) => {
+        if (r.paid) return;
+        if (!r.dueDate) return;
+        const diffMs = new Date(r.dueDate).getTime() - new Date(todayStr).getTime();
+        const diffDays = Math.ceil(diffMs / (1000 * 3600 * 24));
+        if (diffDays < 0) {
+          list.push({
+            id: `reminder_overdue_${r.id}`,
+            type: 'danger',
+            title: `Overdue Bill: ${r.title}`,
+            description: `${fmtMoney(r.amount, r.currency)} was due on ${r.dueDate} (${Math.abs(diffDays)} days ago).`,
+            actionLabel: 'Pay / Mark Paid',
+            onAction: () => { onClose(); if (onOpenReminders) onOpenReminders(); },
+            time: 'Overdue',
+          });
+        } else if (diffDays <= 3) {
+          list.push({
+            id: `reminder_upcoming_${r.id}`,
+            type: 'warning',
+            title: `Bill Due ${diffDays === 0 ? 'Today' : `in ${diffDays} day${diffDays > 1 ? 's' : ''}`}: ${r.title}`,
+            description: `${fmtMoney(r.amount, r.currency)} due on ${r.dueDate}.`,
+            actionLabel: 'View Reminder',
+            onAction: () => { onClose(); if (onOpenReminders) onOpenReminders(); },
+            time: diffDays === 0 ? 'Due Today' : `In ${diffDays}d`,
+          });
+        }
+      });
+    }
+
+    // 3. Live exchange rates
+    if (notifPreferences.rateUpdates) {
+      const lastFetched = settings.ratesFetchedAt ? timeAgo(settings.ratesFetchedAt) : 'recently';
+      const usdRate = settings.rates?.USD ? fmtMoney(settings.rates.USD, 'PKR') : 'Rs 280';
+      list.push({
+        id: 'rates_status',
+        type: 'info',
+        title: 'Exchange Rates Active',
+        description: `Market rates synced (1 USD = ${usdRate}). Net worth calculations are live.`,
+        actionLabel: 'Refresh Rates',
+        onAction: () => { if (onRefreshRates) onRefreshRates(); },
+        time: lastFetched,
+      });
+    }
+
+    // 4. Trash status
+    if (notifPreferences.trashAlerts && trashEntries && trashEntries.length > 0) {
+      list.push({
+        id: 'trash_notice',
+        type: 'neutral',
+        title: `Trash Retention (${trashEntries.length} Items)`,
+        description: `You have ${trashEntries.length} deleted items. Entries are restorable for 3 days before auto-purge.`,
+        actionLabel: 'Open Trash',
+        onAction: () => { onClose(); if (onOpenSettings) onOpenSettings('trash'); },
+        time: '3-Day Retention',
+      });
+    }
+
+    // 5. Workspace status
+    list.push({
+      id: 'workspace_info',
+      type: 'neutral',
+      title: `Workspace: ${profile?.name || 'Personal Vault'}`,
+      description: `${(profile?.enabledCurrencies || CURRENCIES).length} currencies active in this portfolio view.`,
+      actionLabel: 'Manage Workspaces',
+      onAction: () => { onClose(); if (onOpenSettings) onOpenSettings('workspace'); },
+      time: 'Connected',
+    });
+
+    return list;
+  }, [entries, settings, reminders, trashEntries, profile, notifPreferences, onClose, onOpenSettings, onOpenReminders, onRefreshRates]);
+
+  const unreadCount = notifications.filter((n) => !readIds.includes(n.id)).length;
+
+  const markAllRead = () => {
+    const allIds = notifications.map((n) => n.id);
+    setReadIds(allIds);
+    try {
+      localStorage.setItem('vaultify_read_notifications', JSON.stringify(allIds));
+    } catch (e) {}
+  };
+
+  const markSingleRead = (id) => {
+    if (!readIds.includes(id)) {
+      const next = [...readIds, id];
+      setReadIds(next);
+      try {
+        localStorage.setItem('vaultify_read_notifications', JSON.stringify(next));
+      } catch (e) {}
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 55, display: 'flex', alignItems: 'flex-end', background: 'rgba(26,23,18,0.5)' }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: C.surface, width: '100%', maxWidth: 500, margin: '0 auto', borderRadius: '24px 24px 0 0',
+        maxHeight: '90vh', overflowY: 'auto', padding: '18px 18px 32px', fontFamily: SANS,
+        boxShadow: '0 -10px 34px rgba(26,23,18,0.28)',
+      }}>
+        <div style={{ width: 40, height: 4, background: C.line, borderRadius: 2, margin: '0 auto 16px' }} />
+
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+            <div style={{
+              width: 34, height: 34, borderRadius: 10, background: `${C.navy}12`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.navy,
+            }}>
+              <Bell size={18} />
+            </div>
+            <div>
+              <h2 style={{ fontFamily: SERIF, fontSize: 20, color: C.heading, margin: 0, fontWeight: 700 }}>
+                Notifications & Alerts
+              </h2>
+            </div>
+            {unreadCount > 0 && (
+              <span style={{ fontSize: 10.5, fontWeight: 800, padding: '2px 7px', borderRadius: 8, background: C.navy, color: '#fff' }}>
+                {unreadCount} new
+              </span>
+            )}
+          </div>
+          <button onClick={onClose} style={{ background: C.ice, border: 'none', borderRadius: '50%', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+            <X size={16} color={C.heading} />
+          </button>
+        </div>
+
+        {/* Tab switch: Feed vs Preferences */}
+        <div style={{ display: 'flex', gap: 6, background: C.ice, padding: 4, borderRadius: 12, marginBottom: 16 }}>
+          <button
+            type="button"
+            onClick={() => setActiveTab('alerts')}
+            style={{
+              flex: 1, padding: '8px 12px', borderRadius: 9, border: 'none',
+              background: activeTab === 'alerts' ? C.surface : 'transparent',
+              color: activeTab === 'alerts' ? C.heading : C.muted,
+              fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
+              boxShadow: activeTab === 'alerts' ? '0 1px 4px rgba(20,17,13,0.08)' : 'none',
+            }}
+          >
+            Alerts & Activity ({notifications.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('preferences')}
+            style={{
+              flex: 1, padding: '8px 12px', borderRadius: 9, border: 'none',
+              background: activeTab === 'preferences' ? C.surface : 'transparent',
+              color: activeTab === 'preferences' ? C.heading : C.muted,
+              fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
+              boxShadow: activeTab === 'preferences' ? '0 1px 4px rgba(20,17,13,0.08)' : 'none',
+            }}
+          >
+            Preferences
+          </button>
+        </div>
+
+        {/* TAB 1: ALERTS FEED */}
+        {activeTab === 'alerts' && (
+          <div>
+            {notifications.length > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Recent Notifications
+                </span>
+                {unreadCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={markAllRead}
+                    style={{ background: 'none', border: 'none', color: C.steel, fontSize: 11.5, fontWeight: 800, cursor: 'pointer' }}
+                  >
+                    Mark all as read
+                  </button>
+                )}
+              </div>
+            )}
+
+            {notifications.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '36px 16px', background: C.ice, borderRadius: 16, border: `1px dashed ${C.line}` }}>
+                <CheckCircle2 size={32} color={C.steel} style={{ margin: '0 auto 8px' }} />
+                <div style={{ fontSize: 14, fontWeight: 700, color: C.heading }}>All caught up!</div>
+                <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>No pending notifications or budget alerts.</div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {notifications.map((n) => {
+                  const isRead = readIds.includes(n.id);
+                  const isDanger = n.type === 'danger';
+                  const isWarning = n.type === 'warning';
+                  const isInfo = n.type === 'info';
+
+                  const badgeBg = isDanger ? '#B23A3414' : isWarning ? '#D9770614' : isInfo ? `${C.steel}14` : `${C.navy}0A`;
+                  const badgeColor = isDanger ? '#B23A34' : isWarning ? '#D97706' : isInfo ? C.steel : C.navySoft;
+                  const borderColor = isDanger ? '#B23A3444' : isWarning ? '#D9770644' : C.line;
+
+                  return (
+                    <div
+                      key={n.id}
+                      onClick={() => markSingleRead(n.id)}
+                      style={{
+                        padding: '13px 14px',
+                        borderRadius: 14,
+                        border: `1.5px solid ${borderColor}`,
+                        background: !isRead ? (isDanger ? '#B23A3408' : `${C.navy}05`) : C.surface,
+                        transition: 'all .15s ease',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          {!isRead && (
+                            <span style={{ width: 7, height: 7, borderRadius: '50%', background: isDanger ? '#B23A34' : C.navy, flexShrink: 0 }} />
+                          )}
+                          <span style={{ fontSize: 13, fontWeight: 800, color: C.heading }}>
+                            {n.title}
+                          </span>
+                        </div>
+                        <span style={{
+                          fontSize: 10, fontWeight: 800, padding: '2px 6px', borderRadius: 6,
+                          background: badgeBg, color: badgeColor, flexShrink: 0,
+                        }}>
+                          {n.time}
+                        </span>
+                      </div>
+
+                      <p style={{ fontSize: 12, color: C.muted, margin: '0 0 10px', lineHeight: 1.45 }}>
+                        {n.description}
+                      </p>
+
+                      {n.actionLabel && (
+                        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              markSingleRead(n.id);
+                              if (n.onAction) n.onAction();
+                            }}
+                            style={{
+                              padding: '5px 11px', borderRadius: 8,
+                              border: `1px solid ${badgeColor}`,
+                              background: badgeBg,
+                              color: badgeColor,
+                              fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
+                            }}
+                          >
+                            {n.actionLabel} →
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 2: NOTIFICATION PREFERENCES */}
+        {activeTab === 'preferences' && (
+          <div>
+            <p style={{ fontSize: 12, color: C.muted, marginTop: 0, marginBottom: 14 }}>
+              Customize which alerts and reminders are triggered automatically in Vaultify.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {[
+                {
+                  key: 'budgetAlerts',
+                  label: 'Budget & Spending Warnings',
+                  desc: 'Notify when expenses cross 80% or exceed your set spending limits.',
+                },
+                {
+                  key: 'reminderAlerts',
+                  label: 'Bill & Reminder Due Dates',
+                  desc: 'Alert for bills and payments due today or within 3 days.',
+                },
+                {
+                  key: 'rateUpdates',
+                  label: 'Exchange Rate Synced Alerts',
+                  desc: 'Show status updates when live currency conversion rates are refreshed.',
+                },
+                {
+                  key: 'trashAlerts',
+                  label: 'Trash Retention Notices',
+                  desc: 'Notify about items pending auto-purge in the 3-day trash window.',
+                },
+              ].map((item) => {
+                const isEnabled = !!notifPreferences[item.key];
+                return (
+                  <div
+                    key={item.key}
+                    onClick={() => savePrefs({ ...notifPreferences, [item.key]: !isEnabled })}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '12px 14px', borderRadius: 14,
+                      border: `1.5px solid ${isEnabled ? C.navy : C.line}`,
+                      background: isEnabled ? `${C.navy}08` : C.surface,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div style={{ minWidth: 0, flex: 1, paddingRight: 12 }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: C.heading, marginBottom: 2 }}>
+                        {item.label}
+                      </div>
+                      <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.35 }}>
+                        {item.desc}
+                      </div>
+                    </div>
+
+                    {/* Switch Toggle */}
+                    <div style={{
+                      width: 42, height: 24, borderRadius: 12,
+                      background: isEnabled ? C.navy : C.line,
+                      position: 'relative', transition: 'background .2s ease', flexShrink: 0,
+                    }}>
+                      <div style={{
+                        width: 18, height: 18, borderRadius: '50%', background: '#fff',
+                        position: 'absolute', top: 3,
+                        left: isEnabled ? 21 : 3,
+                        transition: 'left .2s ease',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
+                      }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Settings Sheet (Refactored with Category Dropdown & Pro Workspace) */
 /* ------------------------------------------------------------------ */
 
 function SettingsSheet({
@@ -3425,6 +3915,7 @@ function SettingsSheet({
 }) {
   const C = useColors();
   const [activeTab, setActiveTab] = useState(initialTab || 'workspace');
+  const [dropdownOpen, setDropdownOpen] = useState(false);
   const [limits, setLimits] = useState({});
   const [budgetPeriod, setBudgetPeriod] = useState(settings.budgetPeriod || 'week');
   const [newPw, setNewPw] = useState('');
@@ -3432,10 +3923,20 @@ function SettingsSheet({
   const [pwStatus, setPwStatus] = useState('');
   const [pwSaving, setPwSaving] = useState(false);
 
-  // Workspace state
+  // Workspace creation state
   const [enabledCurrencies, setEnabledCurrencies] = useState(profile?.enabledCurrencies || CURRENCIES);
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
+  const [newWorkspaceCurrencies, setNewWorkspaceCurrencies] = useState([...CURRENCIES]);
   const [showAddWorkspace, setShowAddWorkspace] = useState(false);
+
+  const WORKSPACE_TEMPLATES = [
+    { name: 'Business Vault', icon: '💼', desc: 'Invoices & clients' },
+    { name: 'Personal Vault', icon: '🏦', desc: 'Daily accounts' },
+    { name: 'Crypto Portfolio', icon: '🪙', desc: 'Digital assets' },
+    { name: 'Travel & Trips', icon: '✈️', desc: 'Foreign currency' },
+    { name: 'Family & Home', icon: '🏠', desc: 'Household budget' },
+    { name: 'Freelance & Gigs', icon: '💻', desc: 'Contract revenues' },
+  ];
 
   useEffect(() => {
     if (open) {
@@ -3445,6 +3946,8 @@ function SettingsSheet({
       setEnabledCurrencies(profile?.enabledCurrencies || CURRENCIES);
       setShowAddWorkspace(false);
       setNewWorkspaceName('');
+      setNewWorkspaceCurrencies([...CURRENCIES]);
+      setDropdownOpen(false);
       if (initialTab) setActiveTab(initialTab);
     }
   }, [open, settings, profile, initialTab]);
@@ -3487,14 +3990,24 @@ function SettingsSheet({
     }
   };
 
+  const handleToggleNewWorkspaceCurrency = (c) => {
+    if (newWorkspaceCurrencies.includes(c)) {
+      if (newWorkspaceCurrencies.length <= 1) return;
+      setNewWorkspaceCurrencies((prev) => prev.filter((x) => x !== c));
+    } else {
+      setNewWorkspaceCurrencies((prev) => [...prev, c]);
+    }
+  };
+
   const handleCreateWorkspaceSubmit = (e) => {
     e.preventDefault();
     const name = newWorkspaceName.trim();
     if (!name) return;
     if (onCreateProfile) {
-      onCreateProfile(name);
+      onCreateProfile(name, newWorkspaceCurrencies);
     }
     setNewWorkspaceName('');
+    setNewWorkspaceCurrencies([...CURRENCIES]);
     setShowAddWorkspace(false);
   };
 
@@ -3510,11 +4023,37 @@ function SettingsSheet({
   };
 
   const tabs = [
-    { id: 'workspace', label: 'Workspaces & Currencies', icon: Sliders },
-    { id: 'trash', label: `Trash (${validTrashEntries.length})`, icon: Trash2 },
-    { id: 'general', label: 'General & Limits', icon: Settings },
-    { id: 'security', label: 'Security & Danger Zone', icon: ShieldCheck },
+    {
+      id: 'workspace',
+      label: 'Workspaces & Currencies',
+      subtitle: 'Manage portfolios, currencies & isolation',
+      icon: Sliders,
+      badge: `${enabledCurrencies.length} Active`,
+    },
+    {
+      id: 'trash',
+      label: 'Trash & Redo History',
+      subtitle: 'Restore deleted items (Retained 3 days)',
+      icon: Trash2,
+      badge: validTrashEntries.length > 0 ? `${validTrashEntries.length} Items` : null,
+      badgeColor: '#B23A34',
+    },
+    {
+      id: 'general',
+      label: 'General & Limits',
+      subtitle: 'Appearance theme, budget limits & live rates',
+      icon: Settings,
+    },
+    {
+      id: 'security',
+      label: 'Security & Danger Zone',
+      subtitle: 'Password, backup sheets & account deletion',
+      icon: ShieldCheck,
+    },
   ];
+
+  const currentTabObj = tabs.find((t) => t.id === activeTab) || tabs[0];
+  const CurrentIcon = currentTabObj.icon;
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'flex-end', background: 'rgba(26,23,18,0.5)' }} onClick={onClose}>
@@ -3526,7 +4065,7 @@ function SettingsSheet({
         <div style={{ width: 40, height: 4, background: C.line, borderRadius: 2, margin: '0 auto 16px' }} />
         
         {/* Modal Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <h2 style={{ fontFamily: SERIF, fontSize: 21, color: C.heading, margin: 0, fontWeight: 700 }}>Settings</h2>
             {profile && (
@@ -3542,30 +4081,138 @@ function SettingsSheet({
 
         {userEmail && <p style={{ fontSize: 12, color: C.muted, marginTop: -6, marginBottom: 14 }}>Account: {userEmail}</p>}
 
-        {/* Tab Navigation Pill Bar */}
-        <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 6, marginBottom: 18 }}>
-          {tabs.map((t) => {
-            const Icon = t.icon;
-            const active = activeTab === t.id;
-            return (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => setActiveTab(t.id)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderRadius: 12,
-                  border: `1.5px solid ${active ? C.navy : C.line}`,
-                  background: active ? C.navy : C.surface,
-                  color: active ? '#fff' : C.navySoft,
-                  fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer',
-                  transition: 'all .15s ease',
-                }}
-              >
-                <Icon size={14} color={active ? '#fff' : C.muted} />
-                <span>{t.label}</span>
-              </button>
-            );
-          })}
+        {/* ============================================================ */}
+        {/* REFACTORED SETTINGS CATEGORY SELECTOR (DROPDOWN)             */}
+        {/* ============================================================ */}
+        <div style={{ position: 'relative', marginBottom: 18 }}>
+          <button
+            type="button"
+            onClick={() => setDropdownOpen((v) => !v)}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '12px 14px',
+              borderRadius: 14,
+              border: `1.5px solid ${dropdownOpen ? C.navy : C.line}`,
+              background: dropdownOpen ? `${C.navy}08` : C.surface,
+              boxShadow: '0 2px 8px rgba(20,17,13,0.04)',
+              cursor: 'pointer',
+              textAlign: 'left',
+              transition: 'all .15s ease',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 11, minWidth: 0, flex: 1 }}>
+              <div style={{
+                width: 36, height: 36, borderRadius: 10,
+                background: C.navy, color: '#fff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0,
+              }}>
+                <CurrentIcon size={18} />
+              </div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 800, color: C.heading, display: 'flex', alignItems: 'center', gap: 7 }}>
+                  <span>{currentTabObj.label}</span>
+                  {currentTabObj.badge && (
+                    <span style={{
+                      fontSize: 10, fontWeight: 800, padding: '2px 6px', borderRadius: 6,
+                      background: currentTabObj.badgeColor ? `${currentTabObj.badgeColor}18` : `${C.navy}14`,
+                      color: currentTabObj.badgeColor || C.navy,
+                    }}>
+                      {currentTabObj.badge}
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 11, color: C.muted, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {currentTabObj.subtitle}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, marginLeft: 8 }}>
+              <span style={{ fontSize: 11.5, fontWeight: 700, color: C.steel }}>Change</span>
+              <ChevronDown size={16} color={C.steel} style={{ transform: dropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform .2s ease' }} />
+            </div>
+          </button>
+
+          {/* Dropdown Menu Options */}
+          {dropdownOpen && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 'calc(100% + 6px)',
+                left: 0,
+                right: 0,
+                zIndex: 60,
+                background: C.surface,
+                border: `1.5px solid ${C.navy}33`,
+                borderRadius: 16,
+                padding: '6px',
+                boxShadow: '0 12px 34px rgba(20,17,13,0.18)',
+              }}
+            >
+              {tabs.map((t) => {
+                const Icon = t.icon;
+                const active = activeTab === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => {
+                      setActiveTab(t.id);
+                      setDropdownOpen(false);
+                    }}
+                    style={{
+                      width: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '10px 12px',
+                      borderRadius: 12,
+                      border: active ? `1.5px solid ${C.navy}` : '1.5px solid transparent',
+                      background: active ? `${C.navy}0E` : 'transparent',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      marginBottom: 3,
+                      transition: 'background .15s ease',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+                      <div style={{
+                        width: 32, height: 32, borderRadius: 8,
+                        background: active ? C.navy : C.ice,
+                        color: active ? '#fff' : C.navySoft,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        flexShrink: 0,
+                      }}>
+                        <Icon size={16} />
+                      </div>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: active ? 800 : 700, color: active ? C.navy : C.heading, display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span>{t.label}</span>
+                          {t.badge && (
+                            <span style={{
+                              fontSize: 9.5, fontWeight: 800, padding: '1px 5px', borderRadius: 4,
+                              background: t.badgeColor ? `${t.badgeColor}18` : `${C.navy}14`,
+                              color: t.badgeColor || C.navy,
+                            }}>
+                              {t.badge}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 11, color: C.muted }}>
+                          {t.subtitle}
+                        </div>
+                      </div>
+                    </div>
+                    {active && <Check size={16} color={C.steel} />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* ============================================================ */}
@@ -3573,63 +4220,184 @@ function SettingsSheet({
         {/* ============================================================ */}
         {activeTab === 'workspace' && (
           <div>
-            <SectionLabel right={
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <SectionLabel>Workspaces & Portfolios</SectionLabel>
               <button
+                type="button"
                 onClick={() => setShowAddWorkspace((v) => !v)}
-                style={{ background: 'none', border: 'none', color: C.steel, fontSize: 12, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
+                style={{
+                  background: showAddWorkspace ? `${C.navy}12` : C.navy,
+                  border: 'none',
+                  color: showAddWorkspace ? C.navy : '#fff',
+                  fontSize: 12,
+                  fontWeight: 800,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  padding: '6px 12px',
+                  borderRadius: 10,
+                  cursor: 'pointer',
+                  transition: 'all .15s ease',
+                }}
               >
                 <FolderPlus size={13} /> {showAddWorkspace ? 'Cancel' : '+ New Workspace'}
               </button>
-            }>Workspaces & Portfolios</SectionLabel>
+            </div>
             
-            <p style={{ fontSize: 12, color: C.muted, marginTop: -4, marginBottom: 12, lineHeight: 1.45 }}>
-              Each workspace maintains its own enabled currencies and customized portfolio view.
+            <p style={{ fontSize: 12, color: C.muted, marginTop: -2, marginBottom: 14, lineHeight: 1.45 }}>
+              Each workspace maintains its own enabled currencies, isolated accounts, and customized portfolio view.
             </p>
 
-            {/* Create New Workspace Form */}
+            {/* UPGRADED: Create New Workspace Card Form */}
             {showAddWorkspace && (
-              <form onSubmit={handleCreateWorkspaceSubmit} style={{ background: C.ice, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, marginBottom: 16 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 800, color: C.heading, marginBottom: 8 }}>
-                  Create New Workspace
+              <form onSubmit={handleCreateWorkspaceSubmit} style={{
+                background: C.ice,
+                border: `1.5px solid ${C.navy}33`,
+                borderRadius: 16,
+                padding: '16px 14px',
+                marginBottom: 18,
+                boxShadow: '0 4px 16px rgba(20,17,13,0.06)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 12 }}>
+                  <Sparkles size={16} color={C.steel} />
+                  <span style={{ fontSize: 13.5, fontWeight: 800, color: C.heading }}>
+                    Create New Workspace
+                  </span>
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
+
+                {/* Preset Template Chips */}
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6 }}>
+                  Quick Templates (Tap to select):
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6, marginBottom: 12 }}>
+                  {WORKSPACE_TEMPLATES.map((tmpl) => {
+                    const isSelected = newWorkspaceName.includes(tmpl.name);
+                    return (
+                      <button
+                        key={tmpl.name}
+                        type="button"
+                        onClick={() => setNewWorkspaceName(tmpl.name)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 7,
+                          padding: '7px 9px', borderRadius: 10,
+                          border: `1px solid ${isSelected ? C.navy : C.line}`,
+                          background: isSelected ? `${C.navy}12` : C.surface,
+                          color: isSelected ? C.navy : C.heading,
+                          fontSize: 11.5, fontWeight: 700, cursor: 'pointer', textAlign: 'left',
+                        }}
+                      >
+                        <span style={{ fontSize: 14 }}>{tmpl.icon}</span>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tmpl.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Workspace Name Input */}
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ display: 'block', fontSize: 11.5, fontWeight: 700, color: C.heading, marginBottom: 4 }}>
+                    Workspace Name:
+                  </label>
                   <input
                     type="text"
                     required
-                    placeholder="e.g. Business, Crypto, Travel"
+                    placeholder="e.g. Business Vault, Travel 2026, Crypto"
                     value={newWorkspaceName}
                     onChange={(e) => setNewWorkspaceName(e.target.value)}
-                    style={{ flex: 1, border: `1px solid ${C.line}`, borderRadius: 10, padding: '9px 12px', fontSize: 13, background: C.surface, color: C.navySoft, outline: 'none' }}
+                    style={{
+                      width: '100%', border: `1.5px solid ${C.line}`, borderRadius: 10,
+                      padding: '10px 12px', fontSize: 13, background: C.surface, color: C.navySoft,
+                      outline: 'none', boxSizing: 'border-box',
+                    }}
                   />
-                  <button type="submit" style={{ padding: '9px 16px', borderRadius: 10, border: 'none', background: C.navy, color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
-                    Create
+                </div>
+
+                {/* Initial Enabled Currencies */}
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <label style={{ fontSize: 11.5, fontWeight: 700, color: C.heading }}>
+                      Currencies Active in this Workspace:
+                    </label>
+                    <span style={{ fontSize: 10.5, fontWeight: 700, color: C.steel }}>
+                      {newWorkspaceCurrencies.length} selected
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {CURRENCIES.map((c) => {
+                      const sel = newWorkspaceCurrencies.includes(c);
+                      return (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => handleToggleNewWorkspaceCurrency(c)}
+                          style={{
+                            padding: '5px 9px', borderRadius: 8,
+                            border: `1.5px solid ${sel ? C.navy : C.line}`,
+                            background: sel ? C.navy : C.surface,
+                            color: sel ? '#fff' : C.muted,
+                            fontSize: 11, fontWeight: 800, cursor: 'pointer',
+                          }}
+                        >
+                          {sel ? '✓ ' : '+ '}{c}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Submit / Cancel Actions */}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddWorkspace(false)}
+                    style={{
+                      flex: 1, padding: '10px', borderRadius: 10, border: `1px solid ${C.line}`,
+                      background: C.surface, color: C.muted, fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!newWorkspaceName.trim()}
+                    style={{
+                      flex: 2, padding: '10px', borderRadius: 10, border: 'none',
+                      background: C.navy, color: '#fff', fontSize: 12.5, fontWeight: 800,
+                      cursor: newWorkspaceName.trim() ? 'pointer' : 'not-allowed',
+                      opacity: newWorkspaceName.trim() ? 1 : 0.6,
+                      boxShadow: '0 2px 8px rgba(20,17,13,0.15)',
+                    }}
+                  >
+                    Create Workspace
                   </button>
                 </div>
               </form>
             )}
 
-            {/* Workspace list */}
+            {/* Workspace list cards */}
             {profiles && profiles.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 9, marginBottom: 20 }}>
                 {profiles.map((p) => {
                   const isActive = p.id === profile?.id;
+                  const currs = p.enabledCurrencies || CURRENCIES;
                   return (
                     <div
                       key={p.id}
                       style={{
                         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        padding: '10px 14px', borderRadius: 14,
+                        padding: '12px 14px', borderRadius: 14,
                         border: `1.5px solid ${isActive ? C.navy : C.line}`,
-                        background: isActive ? `${C.navy}0B` : C.surface,
+                        background: isActive ? `${C.navy}09` : C.surface,
+                        boxShadow: isActive ? '0 2px 10px rgba(20,17,13,0.06)' : 'none',
                       }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 11, minWidth: 0, flex: 1 }}>
                         <div style={{
-                          width: 34, height: 34, borderRadius: '50%', overflow: 'hidden',
+                          width: 38, height: 38, borderRadius: '50%', overflow: 'hidden',
                           background: `linear-gradient(135deg, ${C.navy}, ${C.navySoft})`,
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          color: '#fff', fontSize: 13, fontWeight: 800, flexShrink: 0,
-                          border: `1px solid ${C.silver}`,
+                          color: '#fff', fontSize: 14, fontWeight: 800, flexShrink: 0,
+                          border: `1.5px solid ${C.silver}`,
                         }}>
                           {p.avatar ? <img src={p.avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : p.name.charAt(0)}
                         </div>
@@ -3637,18 +4405,22 @@ function SettingsSheet({
                           <div style={{ fontSize: 13.5, fontWeight: 800, color: C.heading, display: 'flex', alignItems: 'center', gap: 6 }}>
                             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
                             {isActive && (
-                              <span style={{ fontSize: 9.5, fontWeight: 800, padding: '1px 5px', borderRadius: 4, background: '#1E9E64', color: '#fff' }}>
+                              <span style={{ fontSize: 9.5, fontWeight: 800, padding: '1px 6px', borderRadius: 5, background: '#1E9E64', color: '#fff' }}>
                                 Active
                               </span>
                             )}
                           </div>
-                          <div style={{ fontSize: 11, color: C.muted }}>
-                            {(p.enabledCurrencies || CURRENCIES).length} active currencies: {(p.enabledCurrencies || CURRENCIES).join(', ')}
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 3 }}>
+                            {currs.map((c) => (
+                              <span key={c} style={{ fontSize: 9.5, fontWeight: 700, padding: '1px 5px', borderRadius: 4, background: `${C.navy}10`, color: C.navy }}>
+                                {c}
+                              </span>
+                            ))}
                           </div>
                         </div>
                       </div>
 
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, marginLeft: 8 }}>
                         {!isActive ? (
                           <button
                             type="button"
@@ -3681,7 +4453,7 @@ function SettingsSheet({
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
               <SectionLabel>Workspace Currency Manager</SectionLabel>
               <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: `${C.navy}12`, color: C.navy }}>
-                {enabledCurrencies.length} / {CURRENCIES.length} Enabled (Auto-Saved)
+                {enabledCurrencies.length} / {CURRENCIES.length} Enabled
               </span>
             </div>
             <p style={{ fontSize: 12, color: C.muted, marginTop: 0, marginBottom: 14, lineHeight: 1.45 }}>
@@ -5040,11 +5812,23 @@ function Dashboard({
 /* History                                                            */
 /* ------------------------------------------------------------------ */
 
-function HistoryScreen({ entries, onEdit, settings, initialCurrency, onCurrencyChange, currencies = CURRENCIES }) {
+function HistoryScreen({
+  entries,
+  onEdit,
+  settings,
+  initialCurrency,
+  onCurrencyChange,
+  currencies = CURRENCIES,
+  profiles = [],
+  activeProfile,
+  onOpenWorkspaceTransfer,
+  onOpenCrossTransferAudit,
+}) {
   const C = useColors();
   const activeCurrenciesList = currencies && currencies.length ? currencies : CURRENCIES;
   const [filterCurrency, setFilterCurrency] = useState(initialCurrency || 'All');
   const [filterType, setFilterType] = useState('All');
+  const [filterWorkspaceId, setFilterWorkspaceId] = useState('all');
   const [range, setRange] = useState('all');
 
   useEffect(() => {
@@ -5064,11 +5848,12 @@ function HistoryScreen({ entries, onEdit, settings, initialCurrency, onCurrencyC
     const startOfWeekStr = startOfWeek.toISOString().slice(0, 10);
     const startOfMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
     return entries
+      .filter((e) => filterWorkspaceId === 'all' || (e.workspaceId || 'default') === filterWorkspaceId)
       .filter((e) => filterCurrency === 'All' || e.currency === filterCurrency)
       .filter((e) => filterType === 'All' || e.type === filterType)
       .filter((e) => range === 'week' ? e.date >= startOfWeekStr : range === 'month' ? e.date >= startOfMonthStr : true)
       .sort((a, b) => (a.date < b.date ? 1 : -1));
-  }, [entries, filterCurrency, filterType, range]);
+  }, [entries, filterWorkspaceId, filterCurrency, filterType, range]);
 
   // Calculations for the 5 top square blocks (Income, Expense, Saving, Investment, Pata Nahi)
   const totalsByType = useMemo(() => {
@@ -5078,6 +5863,7 @@ function HistoryScreen({ entries, onEdit, settings, initialCurrency, onCurrencyC
     const startOfMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
 
     const baseEntries = entries
+      .filter((e) => filterWorkspaceId === 'all' || (e.workspaceId || 'default') === filterWorkspaceId)
       .filter((e) => filterCurrency === 'All' || e.currency === filterCurrency)
       .filter((e) => range === 'week' ? e.date >= startOfWeekStr : range === 'month' ? e.date >= startOfMonthStr : true);
 
@@ -5208,7 +5994,52 @@ function HistoryScreen({ entries, onEdit, settings, initialCurrency, onCurrencyC
 
   return (
     <div style={{ padding: '20px 16px 100px', fontFamily: SANS }}>
-      <h2 style={{ fontFamily: SERIF, fontSize: 23, color: C.heading, marginBottom: 14, fontWeight: 600 }}>History</h2>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+        <h2 style={{ fontFamily: SERIF, fontSize: 23, color: C.heading, margin: 0, fontWeight: 600 }}>History</h2>
+        {onOpenWorkspaceTransfer && (
+          <button
+            type="button"
+            onClick={onOpenWorkspaceTransfer}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '6px 12px', borderRadius: 10,
+              background: 'rgba(5,150,105,0.12)', border: '1px solid rgba(5,150,105,0.3)',
+              color: '#059669', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+            }}
+          >
+            <Shuffle size={13} /> Inter-Workspace Transfer
+          </button>
+        )}
+      </div>
+
+      {/* Workspace Filter Pills (if multiple workspaces exist) */}
+      {profiles && profiles.length > 1 && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6, overflowX: 'auto',
+          paddingBottom: 8, marginBottom: 12,
+        }}>
+          <span style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.04em', flexShrink: 0 }}>
+            Vault:
+          </span>
+          <Chip
+            active={filterWorkspaceId === 'all'}
+            onClick={() => setFilterWorkspaceId('all')}
+            style={{ fontSize: 11.5, padding: '4px 10px', flexShrink: 0 }}
+          >
+            All Workspaces
+          </Chip>
+          {profiles.map((p) => (
+            <Chip
+              key={p.id}
+              active={filterWorkspaceId === p.id}
+              onClick={() => setFilterWorkspaceId(p.id)}
+              style={{ fontSize: 11.5, padding: '4px 10px', flexShrink: 0 }}
+            >
+              {p.name} {p.id === activeProfile?.id ? '★' : ''}
+            </Chip>
+          ))}
+        </div>
+      )}
 
       {/* Top Summary Blocks: Compact 'All' box followed by Income, Expense, Saving, Investments, Pata Nahi */}
       <div style={{
@@ -5664,6 +6495,31 @@ function HistoryScreen({ entries, onEdit, settings, initialCurrency, onCurrencyC
                 <div style={{ fontSize: 11, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {e.date}{e.holdingSource ? ` · ${e.holdingSource}` : ''}{e.note ? ` · ${e.note}` : ''}
                 </div>
+
+                {e.crossTransfer && (
+                  <div
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      onOpenCrossTransferAudit && onOpenCrossTransferAudit(e);
+                    }}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                      padding: '2px 7px', borderRadius: 6,
+                      background: e.crossTransfer.role === 'source' ? 'rgba(178,58,52,0.1)' : 'rgba(5,150,105,0.1)',
+                      border: `1px solid ${e.crossTransfer.role === 'source' ? 'rgba(178,58,52,0.25)' : 'rgba(5,150,105,0.25)'}`,
+                      color: e.crossTransfer.role === 'source' ? '#B23A34' : '#059669',
+                      fontSize: 10, fontWeight: 700, marginTop: 4, cursor: 'pointer',
+                    }}
+                    title="Click to view full Inter-Workspace audit details"
+                  >
+                    <Shuffle size={10} />
+                    <span>
+                      {e.crossTransfer.role === 'source'
+                        ? `⇄ Debited to ${profiles.find(p => p.id === e.crossTransfer.targetWorkspaceId)?.name || 'Target'}`
+                        : `⇄ Credited from ${profiles.find(p => p.id === e.crossTransfer.sourceWorkspaceId)?.name || 'Source'}`}
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div style={{ textAlign: 'right', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -6625,10 +7481,823 @@ function ReportScreen({ entries, reminders = [], requestPassword, onOpenImport }
 }
 
 /* ------------------------------------------------------------------ */
+/* Inter-Workspace Transfer Modal (Multi-Step with Password Auth)     */
+/* ------------------------------------------------------------------ */
+
+function InterWorkspaceTransferModal({
+  open,
+  onClose,
+  onExecuteTransfer,
+  profiles = [],
+  activeProfile,
+  onCreateProfile,
+  currencies = CURRENCIES,
+  settings,
+  userEmail,
+  initialData,
+}) {
+  const C = useColors();
+  const [step, setStep] = useState('form'); // 'form' | 'confirm' | 'auth' | 'success'
+  const [fromProfileId, setFromProfileId] = useState(activeProfile?.id || profiles[0]?.id || 'default');
+  const [toProfileId, setToProfileId] = useState('');
+  const [fromAmount, setFromAmount] = useState('');
+  const [fromCurrency, setFromCurrency] = useState('PKR');
+  const [toCurrency, setToCurrency] = useState('PKR');
+  const [transferType, setTransferType] = useState('income'); // 'income' (Profit/Draw to Target), 'saving', 'investment'
+  const [category, setCategory] = useState('Salary Draw / Profit Allocation');
+  const [note, setNote] = useState('');
+  const [date, setDate] = useState(todayStr());
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [authError, setAuthError] = useState('');
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+
+  // Initialize or reset when opened
+  useEffect(() => {
+    if (!open) return;
+    setStep('form');
+    setAuthError('');
+    setPassword('');
+    const srcId = initialData?.fromProfileId || activeProfile?.id || profiles[0]?.id || 'default';
+    setFromProfileId(srcId);
+    
+    // Default destination is the first other profile available
+    const otherProfile = profiles.find((p) => p.id !== srcId);
+    setToProfileId(otherProfile?.id || '');
+
+    setFromAmount(initialData?.fromAmount ? String(initialData.fromAmount) : '');
+    setFromCurrency(initialData?.fromCurrency || settings?.lastCurrency || 'PKR');
+    setToCurrency(settings?.lastCurrency || 'PKR');
+    setTransferType(initialData?.transferType || 'income');
+    setCategory(initialData?.category || 'Salary Draw / Profit Allocation');
+    setNote(initialData?.note || '');
+    setDate(initialData?.date || todayStr());
+  }, [open, initialData, activeProfile, profiles, settings]);
+
+  if (!open) return null;
+
+  const fromProfile = profiles.find((p) => p.id === fromProfileId) || profiles[0] || { name: 'Source Vault' };
+  const toProfile = profiles.find((p) => p.id === toProfileId) || profiles.find((p) => p.id !== fromProfileId) || { name: 'Target Vault' };
+
+  // Calculate target converted amount using exchange rates
+  const rates = settings?.rates || DEFAULT_RATES;
+  const numFrom = Number(fromAmount) || 0;
+  const fromRateInPkr = rates[fromCurrency] || 1;
+  const toRateInPkr = rates[toCurrency] || 1;
+  const calculatedToAmount = toRateInPkr > 0 ? (numFrom * fromRateInPkr) / toRateInPkr : numFrom;
+
+  const hasMultipleProfiles = profiles && profiles.length > 1;
+
+  const handleReview = () => {
+    if (!numFrom || numFrom <= 0) return;
+    if (!toProfileId || toProfileId === fromProfileId) return;
+    setStep('confirm');
+  };
+
+  const handleProceedToAuth = () => {
+    setAuthError('');
+    setPassword('');
+    setStep('auth');
+  };
+
+  const handleAuthorizeAndExecute = async (e) => {
+    if (e) e.preventDefault();
+    if (!password) {
+      setAuthError('Please enter your password to confirm.');
+      return;
+    }
+    setIsAuthenticating(true);
+    setAuthError('');
+
+    try {
+      if (userEmail) {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: userEmail,
+          password: password.trim(),
+        });
+        if (error) {
+          setIsAuthenticating(false);
+          setAuthError('Incorrect password. Please verify and try again.');
+          return;
+        }
+      }
+
+      // Execute cross-workspace transfer
+      const success = await onExecuteTransfer({
+        fromProfileId,
+        toProfileId,
+        fromCurrency,
+        toCurrency,
+        fromAmount: numFrom,
+        toAmount: Number(calculatedToAmount.toFixed(2)),
+        transferType,
+        category,
+        note,
+        date,
+      });
+
+      setIsAuthenticating(false);
+      if (success) {
+        setStep('success');
+        setTimeout(() => {
+          onClose();
+        }, 1100);
+      } else {
+        setAuthError('Transfer failed. Please check your connection.');
+      }
+    } catch (err) {
+      setIsAuthenticating(false);
+      setAuthError(err.message || 'Authorization failed. Please try again.');
+    }
+  };
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 60,
+      background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(6px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: '16px', boxSizing: 'border-box',
+    }}>
+      <div style={{
+        background: C.surface,
+        border: `1.5px solid ${C.line}`,
+        borderRadius: 20,
+        width: '100%',
+        maxWidth: 480,
+        maxHeight: '92vh',
+        overflowY: 'auto',
+        boxShadow: '0 20px 48px rgba(0,0,0,0.4)',
+        display: 'flex',
+        flexDirection: 'column',
+      }}>
+        {/* Header */}
+        <div style={{
+          padding: '18px 20px',
+          borderBottom: `1px solid ${C.line}`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{
+              width: 36, height: 36, borderRadius: 10,
+              background: 'linear-gradient(135deg, rgba(5,150,105,0.18), rgba(30,64,175,0.18))',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Shuffle size={18} color="#059669" />
+            </div>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: C.heading }}>
+                Inter-Workspace Transfer
+              </div>
+              <div style={{ fontSize: 11, color: C.muted, fontWeight: 500 }}>
+                {step === 'form' ? 'Move & allocate entries across workspaces' :
+                 step === 'confirm' ? 'Security Confirmation' :
+                 step === 'auth' ? 'Password Verification' : 'Transfer Complete'}
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.muted, padding: 4 }}
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Body content based on step */}
+        <div style={{ padding: '20px' }}>
+          {!hasMultipleProfiles && step === 'form' ? (
+            <div style={{ textAlign: 'center', padding: '20px 8px' }}>
+              <div style={{
+                width: 52, height: 52, borderRadius: 16, background: `${C.navy}14`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                margin: '0 auto 16px',
+              }}>
+                <FolderPlus size={24} color={C.navy} />
+              </div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: C.heading, marginBottom: 8 }}>
+                Multiple Workspaces Required
+              </div>
+              <div style={{ fontSize: 13, color: C.muted, lineHeight: 1.5, marginBottom: 20 }}>
+                You currently have 1 workspace. Create a second workspace (e.g. <strong>"Professional"</strong> or <strong>"Business"</strong>) to enable cross-vault transfers, salary draws, and profit allocations.
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onCreateProfile && onCreateProfile();
+                }}
+                style={{
+                  padding: '12px 20px', borderRadius: 12, border: 'none',
+                  background: C.navy, color: '#fff', fontSize: 14, fontWeight: 700,
+                  cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 8,
+                }}
+              >
+                <Plus size={16} /> Create New Workspace
+              </button>
+            </div>
+          ) : step === 'form' ? (
+            <div>
+              {/* Source & Destination Vault Selectors */}
+              <div style={{
+                display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 10,
+                alignItems: 'center', marginBottom: 18,
+              }}>
+                {/* Source Vault */}
+                <div style={{
+                  padding: 12, borderRadius: 14, background: C.ice,
+                  border: `1px solid ${C.line}`,
+                }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: '#B23A34', textTransform: 'uppercase', marginBottom: 4, letterSpacing: '0.04em' }}>
+                    From (Debit)
+                  </div>
+                  <select
+                    value={fromProfileId}
+                    onChange={(e) => {
+                      setFromProfileId(e.target.value);
+                      if (e.target.value === toProfileId) {
+                        const other = profiles.find((p) => p.id !== e.target.value);
+                        if (other) setToProfileId(other.id);
+                      }
+                    }}
+                    style={{
+                      width: '100%', border: 'none', background: 'transparent',
+                      fontSize: 13, fontWeight: 700, color: C.heading, outline: 'none',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {profiles.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Arrow Icon */}
+                <div style={{
+                  width: 32, height: 32, borderRadius: '50%', background: C.surface,
+                  border: `1px solid ${C.line}`, display: 'flex', alignItems: 'center',
+                  justifyContent: 'center',
+                }}>
+                  <ArrowRight size={14} color={C.navy} />
+                </div>
+
+                {/* Destination Vault */}
+                <div style={{
+                  padding: 12, borderRadius: 14, background: C.ice,
+                  border: `1px solid ${C.line}`,
+                }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: '#059669', textTransform: 'uppercase', marginBottom: 4, letterSpacing: '0.04em' }}>
+                    To (Credit)
+                  </div>
+                  <select
+                    value={toProfileId}
+                    onChange={(e) => setToProfileId(e.target.value)}
+                    style={{
+                      width: '100%', border: 'none', background: 'transparent',
+                      fontSize: 13, fontWeight: 700, color: C.heading, outline: 'none',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {profiles.filter((p) => p.id !== fromProfileId).map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Transfer Direction / Intent */}
+              <div style={{ marginBottom: 16 }}>
+                <SectionLabel>Transfer Allocation Type</SectionLabel>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                  {[
+                    { key: 'income', label: 'Income Draw', desc: 'Adds as Income in target', icon: Wallet, color: '#1E9E64' },
+                    { key: 'saving', label: 'Save Reserve', desc: 'Adds to Savings in target', icon: PiggyBank, color: '#2E6F6F' },
+                    { key: 'investment', label: 'Invest Capital', desc: 'Adds to Investment in target', icon: TrendingUp, color: '#6B5FA8' },
+                  ].map((t) => {
+                    const active = transferType === t.key;
+                    return (
+                      <button
+                        key={t.key}
+                        type="button"
+                        onClick={() => setTransferType(t.key)}
+                        style={{
+                          padding: '10px 8px', borderRadius: 12,
+                          background: active ? `${t.color}15` : C.ice,
+                          border: `1.5px solid ${active ? t.color : C.line}`,
+                          cursor: 'pointer', textAlign: 'center', transition: 'all .15s ease',
+                        }}
+                      >
+                        <div style={{ fontSize: 12, fontWeight: 700, color: active ? t.color : C.heading, marginBottom: 2 }}>
+                          {t.label}
+                        </div>
+                        <div style={{ fontSize: 9.5, color: C.muted, fontWeight: 500 }}>
+                          {t.desc}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Amount & Currency */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <SectionLabel style={{ margin: 0 }}>Transfer Amount & Currency</SectionLabel>
+                  {fromCurrency !== toCurrency && (
+                    <div style={{ fontSize: 11, color: C.navy, fontWeight: 700 }}>
+                      1 {fromCurrency} ≈ {fmtAmount(fromRateInPkr / toRateInPkr)} {toCurrency}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  background: C.ice, borderRadius: 14, padding: '10px 14px',
+                  border: `1.5px solid ${C.line}`,
+                }}>
+                  <select
+                    value={fromCurrency}
+                    onChange={(e) => setFromCurrency(e.target.value)}
+                    style={{
+                      border: 'none', background: 'transparent', fontSize: 16,
+                      fontWeight: 800, color: C.navy, outline: 'none', cursor: 'pointer',
+                    }}
+                  >
+                    {currencies.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    value={fromAmount}
+                    onChange={(e) => setFromAmount(e.target.value)}
+                    style={{
+                      flex: 1, border: 'none', background: 'transparent', outline: 'none',
+                      fontFamily: MONO, fontSize: 22, fontWeight: 700, color: C.heading,
+                    }}
+                  />
+                </div>
+
+                {/* Target Currency Selector & Converted Preview */}
+                <div style={{
+                  marginTop: 10, padding: '10px 12px', borderRadius: 12,
+                  background: `${C.navy}08`, border: `1px dashed ${C.navy}33`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>Target receives in:</span>
+                    <select
+                      value={toCurrency}
+                      onChange={(e) => setToCurrency(e.target.value)}
+                      style={{
+                        border: `1px solid ${C.line}`, background: C.surface,
+                        borderRadius: 6, padding: '2px 6px', fontSize: 12, fontWeight: 700,
+                        color: C.heading, outline: 'none', cursor: 'pointer',
+                      }}
+                    >
+                      {currencies.map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 800, color: '#059669' }}>
+                      ≈ {fmtMoney(calculatedToAmount, toCurrency)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Purpose / Category Suggestions */}
+              <div style={{ marginBottom: 16 }}>
+                <SectionLabel>Category / Reason</SectionLabel>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                  {[
+                    'Salary Draw / Profit Allocation',
+                    'Personal Savings Transfer',
+                    'Business Capital Funding',
+                    'Vault Rebalancing',
+                    'Emergency Transfer',
+                  ].map((cat) => (
+                    <Chip
+                      key={cat}
+                      active={category === cat}
+                      onClick={() => setCategory(cat)}
+                      style={{ fontSize: 11.5, padding: '5px 10px' }}
+                    >
+                      {cat}
+                    </Chip>
+                  ))}
+                </div>
+              </div>
+
+              {/* Note */}
+              <div style={{ marginBottom: 16 }}>
+                <SectionLabel>Note (Optional)</SectionLabel>
+                <input
+                  type="text"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="e.g. Monthly salary from client project to personal..."
+                  style={{
+                    width: '100%', border: `1px solid ${C.line}`, borderRadius: 12,
+                    padding: '10px 14px', fontSize: 13.5, outline: 'none',
+                    color: C.heading, background: C.surface, boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+
+              {/* Date */}
+              <div style={{ marginBottom: 20 }}>
+                <SectionLabel>Transaction Date</SectionLabel>
+                <input
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  style={{
+                    width: '100%', border: `1px solid ${C.line}`, borderRadius: 12,
+                    padding: '10px 14px', fontSize: 13.5, outline: 'none',
+                    color: C.heading, background: C.surface, boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+
+              {/* Submit Button */}
+              <button
+                type="button"
+                onClick={handleReview}
+                disabled={!numFrom || numFrom <= 0 || !toProfileId || toProfileId === fromProfileId}
+                style={{
+                  width: '100%', padding: '14px', borderRadius: 14, border: 'none',
+                  background: numFrom > 0 && toProfileId ? C.navy : C.silver,
+                  color: '#fff', fontSize: 15, fontWeight: 700, cursor: numFrom > 0 ? 'pointer' : 'default',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                }}
+              >
+                Review & Confirm Transfer <ChevronRight size={16} />
+              </button>
+            </div>
+          ) : step === 'confirm' ? (
+            /* STEP 2: Prominent Confirmation Dialog */
+            <div>
+              {/* WARNING BOX */}
+              <div style={{
+                background: 'linear-gradient(135deg, rgba(217,119,6,0.14), rgba(178,58,52,0.12))',
+                border: '1.5px solid rgba(217,119,6,0.4)',
+                borderRadius: 16,
+                padding: '16px 18px',
+                marginBottom: 20,
+                textAlign: 'center',
+              }}>
+                <div style={{
+                  width: 44, height: 44, borderRadius: '50%',
+                  background: 'rgba(217,119,6,0.2)', border: '1px solid rgba(217,119,6,0.4)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  margin: '0 auto 10px',
+                }}>
+                  <AlertTriangle size={24} color="#D97706" />
+                </div>
+                <div style={{
+                  fontFamily: SERIF, fontSize: 16, fontWeight: 800,
+                  color: '#B23A34', letterSpacing: '0.02em', marginBottom: 6,
+                  textTransform: 'uppercase',
+                }}>
+                  DO YOU REALLY WANT TO MAKE THIS TRANSACTION?
+                </div>
+                <div style={{ fontSize: 12.5, color: C.heading, fontWeight: 600, lineHeight: 1.5 }}>
+                  This will synchronize both workspaces by debiting from <strong>{fromProfile.name}</strong> and crediting <strong>{toProfile.name}</strong>.
+                </div>
+              </div>
+
+              {/* Visual Transaction Summary */}
+              <div style={{
+                background: C.ice, border: `1px solid ${C.line}`,
+                borderRadius: 16, padding: '16px', marginBottom: 20,
+              }}>
+                {/* Source Debit Item */}
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  paddingBottom: 12, borderBottom: `1px solid ${C.line}`,
+                }}>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#B23A34', textTransform: 'uppercase' }}>
+                      Debited from
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: C.heading }}>
+                      {fromProfile.name}
+                    </div>
+                  </div>
+                  <div style={{ fontFamily: MONO, fontSize: 16, fontWeight: 800, color: '#B23A34' }}>
+                    - {fmtMoney(numFrom, fromCurrency)}
+                  </div>
+                </div>
+
+                {/* Target Credit Item */}
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  paddingTop: 12,
+                }}>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#059669', textTransform: 'uppercase' }}>
+                      Credited to ({transferType === 'saving' ? 'Savings' : transferType === 'investment' ? 'Investment' : 'Income'})
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: C.heading }}>
+                      {toProfile.name}
+                    </div>
+                  </div>
+                  <div style={{ fontFamily: MONO, fontSize: 16, fontWeight: 800, color: '#059669' }}>
+                    + {fmtMoney(calculatedToAmount, toCurrency)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Transaction Metadata */}
+              <div style={{
+                fontSize: 12, color: C.muted, background: `${C.navy}06`,
+                borderRadius: 12, padding: '12px 14px', marginBottom: 20,
+                display: 'flex', flexDirection: 'column', gap: 6,
+              }}>
+                <div><strong>Category:</strong> {category}</div>
+                {note && <div><strong>Note:</strong> {note}</div>}
+                <div><strong>Date:</strong> {date}</div>
+                <div><strong>Live Conversion Rate:</strong> 1 {fromCurrency} = {fmtAmount(fromRateInPkr / toRateInPkr)} {toCurrency}</div>
+              </div>
+
+              {/* Actions */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.6fr', gap: 10 }}>
+                <button
+                  type="button"
+                  onClick={() => setStep('form')}
+                  style={{
+                    padding: '13px', borderRadius: 14, border: `1px solid ${C.line}`,
+                    background: C.surface, color: C.heading, fontSize: 14, fontWeight: 700,
+                    cursor: 'pointer',
+                  }}
+                >
+                  ← Edit Details
+                </button>
+                <button
+                  type="button"
+                  onClick={handleProceedToAuth}
+                  style={{
+                    padding: '13px', borderRadius: 14, border: 'none',
+                    background: C.navy, color: '#fff', fontSize: 14, fontWeight: 800,
+                    cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  }}
+                >
+                  <Lock size={15} /> Yes, Authorize →
+                </button>
+              </div>
+            </div>
+          ) : step === 'auth' ? (
+            /* STEP 3: Password Required Authentication */
+            <form onSubmit={handleAuthorizeAndExecute}>
+              <div style={{ textAlign: 'center', marginBottom: 20 }}>
+                <div style={{
+                  width: 52, height: 52, borderRadius: 16, background: `${C.navy}12`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  margin: '0 auto 12px', border: `1.5px solid ${C.navy}33`,
+                }}>
+                  <KeyRound size={26} color={C.navy} />
+                </div>
+                <div style={{ fontSize: 17, fontWeight: 800, color: C.heading, marginBottom: 6 }}>
+                  Password Required
+                </div>
+                <div style={{ fontSize: 13, color: C.muted, lineHeight: 1.4 }}>
+                  Enter your account password to authorize this cross-workspace transaction between <strong>{fromProfile.name}</strong> and <strong>{toProfile.name}</strong>.
+                </div>
+              </div>
+
+              {authError && (
+                <div style={{
+                  background: 'rgba(178,58,52,0.12)', border: '1px solid rgba(178,58,52,0.3)',
+                  borderRadius: 12, padding: '10px 14px', color: '#B23A34',
+                  fontSize: 12.5, fontWeight: 600, marginBottom: 16, textAlign: 'center',
+                }}>
+                  {authError}
+                </div>
+              )}
+
+              <div style={{ marginBottom: 20 }}>
+                <SectionLabel>Account Password</SectionLabel>
+                <div style={{
+                  display: 'flex', alignItems: 'center',
+                  background: C.surface, border: `1.5px solid ${C.navy}44`,
+                  borderRadius: 12, padding: '10px 14px',
+                }}>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="Enter password..."
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoFocus
+                    style={{
+                      flex: 1, border: 'none', background: 'transparent',
+                      outline: 'none', fontSize: 14, color: C.heading,
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.muted, padding: 2 }}
+                  >
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.6fr', gap: 10 }}>
+                <button
+                  type="button"
+                  onClick={() => setStep('confirm')}
+                  disabled={isAuthenticating}
+                  style={{
+                    padding: '13px', borderRadius: 14, border: `1px solid ${C.line}`,
+                    background: C.surface, color: C.heading, fontSize: 14, fontWeight: 700,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isAuthenticating || !password}
+                  style={{
+                    padding: '13px', borderRadius: 14, border: 'none',
+                    background: password ? '#059669' : C.silver, color: '#fff', fontSize: 14, fontWeight: 800,
+                    cursor: password ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  }}
+                >
+                  {isAuthenticating ? 'Verifying…' : 'Authorize & Execute'}
+                </button>
+              </div>
+            </form>
+          ) : (
+            /* STEP 4: Success State */
+            <div style={{ textAlign: 'center', padding: '30px 10px' }}>
+              <div style={{
+                width: 60, height: 60, borderRadius: '50%', background: '#05966920',
+                border: '2px solid #059669', display: 'flex', alignItems: 'center',
+                justifyContent: 'center', margin: '0 auto 16px',
+              }}>
+                <CheckCircle2 size={36} color="#059669" />
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: C.heading, marginBottom: 8 }}>
+                Transaction Authorized & Completed!
+              </div>
+              <div style={{ fontSize: 13, color: C.muted, lineHeight: 1.5 }}>
+                {fmtMoney(numFrom, fromCurrency)} transferred to {toProfile.name} as {fmtMoney(calculatedToAmount, toCurrency)}.
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Transfer Audit Modal (Detailed Cross-Workspace Audit Trail)        */
+/* ------------------------------------------------------------------ */
+
+function TransferAuditModal({ open, onClose, entry, profiles = [] }) {
+  const C = useColors();
+  if (!open || !entry) return null;
+
+  const xfer = entry.crossTransfer || {};
+  const srcName = xfer.sourceWorkspaceName || profiles.find(p => p.id === xfer.sourceWorkspaceId)?.name || 'Source Vault';
+  const dstName = xfer.targetWorkspaceName || profiles.find(p => p.id === xfer.targetWorkspaceId)?.name || 'Destination Vault';
+  const role = xfer.role || (entry.type === 'expense' ? 'source' : 'target');
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 65,
+      background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(5px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: '16px', boxSizing: 'border-box',
+    }}>
+      <div style={{
+        background: C.surface, border: `1.5px solid ${C.line}`,
+        borderRadius: 20, width: '100%', maxWidth: 440,
+        boxShadow: '0 20px 48px rgba(0,0,0,0.35)', overflow: 'hidden',
+      }}>
+        <div style={{
+          padding: '16px 20px', borderBottom: `1px solid ${C.line}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{
+              width: 34, height: 34, borderRadius: 10, background: 'rgba(5,150,105,0.15)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Shuffle size={16} color="#059669" />
+            </div>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: C.heading }}>
+                Transfer Audit Record
+              </div>
+              <div style={{ fontSize: 11, color: C.muted }}>
+                Inter-Workspace Linked Transaction
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.muted }}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div style={{ padding: '20px' }}>
+          {/* Status Badge */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            background: 'rgba(5,150,105,0.12)', border: '1px solid rgba(5,150,105,0.3)',
+            borderRadius: 10, padding: '8px 12px', marginBottom: 16,
+            color: '#059669', fontSize: 12, fontWeight: 700,
+          }}>
+            <ShieldCheck size={16} />
+            <span>Authorized & Verified via Account Password</span>
+          </div>
+
+          {/* Route Map */}
+          <div style={{
+            background: C.ice, border: `1px solid ${C.line}`,
+            borderRadius: 14, padding: '14px', marginBottom: 16,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 800, color: '#B23A34', textTransform: 'uppercase' }}>Source Vault</div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.heading }}>{srcName}</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: '#059669', textTransform: 'uppercase' }}>Target Vault</div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.heading }}>{dstName}</div>
+              </div>
+            </div>
+
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              gap: 8, padding: '6px 0', color: C.muted, fontSize: 12, fontWeight: 600,
+            }}>
+              <span>{role === 'source' ? 'Outgoing Transfer' : 'Incoming Allocation'}</span>
+              <ArrowRight size={14} color={C.navy} />
+            </div>
+          </div>
+
+          {/* Details table */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12.5, marginBottom: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px solid ${C.line}` }}>
+              <span style={{ color: C.muted }}>Transaction Amount:</span>
+              <strong style={{ fontFamily: MONO, color: C.heading }}>{fmtMoney(entry.amount, entry.currency)}</strong>
+            </div>
+            {xfer.counterpartAmount && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px solid ${C.line}` }}>
+                <span style={{ color: C.muted }}>Counterpart Value:</span>
+                <strong style={{ fontFamily: MONO, color: C.heading }}>{fmtMoney(xfer.counterpartAmount, xfer.counterpartCurrency)}</strong>
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px solid ${C.line}` }}>
+              <span style={{ color: C.muted }}>Category / Purpose:</span>
+              <span style={{ fontWeight: 700, color: C.heading }}>{entry.category || 'Inter-Workspace Transfer'}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px solid ${C.line}` }}>
+              <span style={{ color: C.muted }}>Date:</span>
+              <span style={{ fontWeight: 600, color: C.heading }}>{entry.date}</span>
+            </div>
+            {xfer.id && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0' }}>
+                <span style={{ color: C.muted }}>Transfer Reference ID:</span>
+                <span style={{ fontFamily: MONO, fontSize: 10, color: C.muted }}>{xfer.id}</span>
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              width: '100%', padding: '12px', borderRadius: 12, border: 'none',
+              background: C.navy, color: '#fff', fontSize: 13.5, fontWeight: 700, cursor: 'pointer',
+            }}
+          >
+            Close Audit
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Add FAB menu — toggled by the + button, choose Add entry / Reminder / Calc */
 /* ------------------------------------------------------------------ */
 
-function FabMenu({ open, onClose, onAddEntry, onAddReminder, onAddUntracked, onCalculator, onExchange }) {
+function FabMenu({ open, onClose, onAddEntry, onAddReminder, onAddUntracked, onCalculator, onExchange, onTransferWorkspace }) {
   const C = useColors();
   if (!open) return null;
   return (
@@ -6636,13 +8305,19 @@ function FabMenu({ open, onClose, onAddEntry, onAddReminder, onAddUntracked, onC
       <div style={{ position: 'fixed', inset: 0, zIndex: 38 }} onClick={onClose} />
       <div className="vlf-add-menu" style={{
         display: 'flex', flexDirection: 'column', gap: 6, background: C.surface, border: `1px solid ${C.line}`,
-        borderRadius: 16, padding: 8, boxShadow: '0 14px 34px rgba(0,0,0,0.35)', minWidth: 225,
+        borderRadius: 16, padding: 8, boxShadow: '0 14px 34px rgba(0,0,0,0.35)', minWidth: 235,
       }}>
         <button onClick={() => { onClose(); onAddEntry(); }} className="vlf-hover" style={{
           display: 'flex', alignItems: 'center', gap: 10, padding: '11px 12px', borderRadius: 11, border: 'none',
           background: 'none', color: C.heading, fontSize: 14, fontWeight: 700, textAlign: 'left', cursor: 'pointer',
         }}>
           <Plus size={16} color={C.navy} /> Add entry
+        </button>
+        <button onClick={() => { onClose(); onTransferWorkspace && onTransferWorkspace(); }} className="vlf-hover" style={{
+          display: 'flex', alignItems: 'center', gap: 10, padding: '11px 12px', borderRadius: 11, border: 'none',
+          background: 'none', color: C.heading, fontSize: 14, fontWeight: 700, textAlign: 'left', cursor: 'pointer',
+        }}>
+          <Shuffle size={16} color="#059669" /> Inter-Workspace Transfer
         </button>
         <button onClick={() => { onClose(); onExchange && onExchange(); }} className="vlf-hover" style={{
           display: 'flex', alignItems: 'center', gap: 10, padding: '11px 12px', borderRadius: 11, border: 'none',
@@ -9247,9 +10922,10 @@ function CalculatorScreen({ settings, onSaveEntry, onOpenAddEntry, saving, rates
 function ProfileMenu({
   profile,
   profiles = [],
-  trashCount = 0,
+  unreadNotificationsCount = 0,
   onOpenProfile,
   onOpenSettings,
+  onOpenNotifications,
   onSwitchProfile,
   onSignOut,
 }) {
@@ -9338,7 +11014,7 @@ function ProfileMenu({
           )}
         </div>
 
-        {trashCount > 0 && (
+        {unreadNotificationsCount > 0 && (
           <span style={{
             position: 'absolute',
             top: -3,
@@ -9347,11 +11023,11 @@ function ProfileMenu({
             fontWeight: 800,
             padding: '1px 5px',
             borderRadius: 6,
-            background: '#B23A34',
+            background: C.navy,
             color: '#fff',
             border: `1.5px solid ${C.surface}`,
           }}>
-            {trashCount}
+            {unreadNotificationsCount}
           </span>
         )}
       </button>
@@ -9473,6 +11149,42 @@ function ProfileMenu({
             <ChevronRight size={15} color={C.navy} />
           </button>
 
+          {/* Notifications Link (Replacing Trash) */}
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              if (onOpenNotifications) onOpenNotifications();
+            }}
+            className="vlf-hover"
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '9px 10px',
+              borderRadius: 10,
+              border: 'none',
+              background: 'transparent',
+              color: C.heading,
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: 'pointer',
+              textAlign: 'left',
+              marginBottom: 2,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+              <Bell size={16} color={C.steel} />
+              <span>Notifications & Alerts</span>
+            </div>
+            {unreadNotificationsCount > 0 && (
+              <span style={{ fontSize: 10, fontWeight: 800, padding: '2px 6px', borderRadius: 6, background: C.navy, color: '#fff' }}>
+                {unreadNotificationsCount}
+              </span>
+            )}
+          </button>
+
           {/* Settings Option Button */}
           <button
             type="button"
@@ -9542,40 +11254,6 @@ function ProfileMenu({
             </div>
           )}
 
-          {/* Trash & Redo Quick Link */}
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              if (onOpenSettings) onOpenSettings('trash');
-            }}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '8px 10px',
-              borderRadius: 8,
-              border: 'none',
-              background: 'transparent',
-              color: C.heading,
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: 'pointer',
-              textAlign: 'left',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <RotateCcw size={14} color="#B23A34" />
-              <span>Trash & Redo History</span>
-            </div>
-            {trashCount > 0 && (
-              <span style={{ fontSize: 10, fontWeight: 800, padding: '1px 6px', borderRadius: 6, background: '#B23A3420', color: '#B23A34' }}>
-                {trashCount}
-              </span>
-            )}
-          </button>
-
           <div style={{ height: 1, background: C.line, margin: '5px 0' }} />
 
           {/* Sign Out */}
@@ -9619,11 +11297,12 @@ function TopBar({
   setScreen,
   onOpenProfile,
   onOpenSettings,
+  onOpenNotifications,
   onSignOut,
   onAddEntry,
   profile,
   profiles = [],
-  trashCount = 0,
+  unreadNotificationsCount = 0,
   onSwitchProfile,
 }) {
   const C = useColors();
@@ -9663,9 +11342,10 @@ function TopBar({
           <ProfileMenu
             profile={profile}
             profiles={profiles}
-            trashCount={trashCount}
+            unreadNotificationsCount={unreadNotificationsCount}
             onOpenProfile={onOpenProfile}
             onOpenSettings={onOpenSettings}
+            onOpenNotifications={onOpenNotifications}
             onSwitchProfile={onSwitchProfile}
             onSignOut={onSignOut}
           />
@@ -9687,6 +11367,7 @@ export default function App() {
   const [trashEntries, setTrashEntries] = useState([]);
   const [settingsTab, setSettingsTab] = useState('workspace');
   const [profileOpen, setProfileOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [reminders, setReminders] = useState([]);
@@ -9708,6 +11389,9 @@ export default function App() {
   const [ratesLoading, setRatesLoading] = useState(false);
   const [pwGate, setPwGate] = useState(null);
   const [limitWarning, setLimitWarning] = useState(null);
+  const [transferModalOpen, setTransferModalOpen] = useState(false);
+  const [transferInitialData, setTransferInitialData] = useState(null);
+  const [auditModalEntry, setAuditModalEntry] = useState(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -9878,6 +11562,16 @@ export default function App() {
       : CURRENCIES;
   }, [activeProfile]);
 
+  const unreadNotificationsCount = useMemo(() => {
+    let count = 0;
+    const today = todayStr();
+    (reminders || []).forEach((r) => {
+      if (r.active && r.date <= today) count++;
+    });
+    if (trashEntries && trashEntries.length > 0) count++;
+    return count;
+  }, [reminders, trashEntries]);
+
   // Fallback active currency if disabled
   useEffect(() => {
     if (activeCurrencies && activeCurrencies.length > 0) {
@@ -9954,12 +11648,12 @@ export default function App() {
     setTimeout(() => setShowStamp(false), 900);
   };
 
-  const handleCreateProfile = (name) => {
+  const handleCreateProfile = (name, customCurrencies) => {
     const newP = {
       id: uid(),
       name: name.trim(),
       avatar: null,
-      enabledCurrencies: ['PKR', 'TRY', 'USD', 'EUR', 'GBP', 'USDT'],
+      enabledCurrencies: (customCurrencies && customCurrencies.length > 0) ? customCurrencies : ['PKR', 'TRY', 'USD', 'EUR', 'GBP', 'USDT'],
     };
     const next = [...profiles, newP];
     persistProfiles(next, newP.id);
@@ -10209,6 +11903,7 @@ export default function App() {
     // Snapshot the live PKR rate for this currency at the moment the entry is saved.
     const entry = {
       ...entryInput,
+      workspaceId: entryInput.workspaceId || activeProfileId || 'default',
       rateAtEntry: entryInput.currency !== 'PKR' ? (settings.rates[entryInput.currency] ?? null) : null,
     };
     if (entry.id) {
@@ -10253,6 +11948,86 @@ export default function App() {
     setEditingEntry(null);
     setShowStamp(true);
     setTimeout(() => setShowStamp(false), 900);
+  };
+
+  const handleExecuteInterWorkspaceTransfer = async ({
+    fromProfileId,
+    toProfileId,
+    fromCurrency,
+    toCurrency,
+    fromAmount,
+    toAmount,
+    transferType,
+    category,
+    note,
+    date,
+  }) => {
+    if (!session?.user?.id) return false;
+    const uidVal = session.user.id;
+    const xferId = uid();
+
+    const fromProf = profiles.find((p) => p.id === fromProfileId) || { name: 'Source Vault' };
+    const toProf = profiles.find((p) => p.id === toProfileId) || { name: 'Target Vault' };
+
+    const debitEntry = {
+      id: uid(),
+      type: 'expense',
+      amount: Number(fromAmount),
+      currency: fromCurrency,
+      category: category || 'Inter-Workspace Transfer',
+      holdingSource: 'Cash in Hand',
+      note: `[Inter-Workspace Debit] Sent to ${toProf.name}${note ? ` · ${note}` : ''}`,
+      date: date || todayStr(),
+      workspaceId: fromProfileId,
+      rateAtEntry: fromCurrency !== 'PKR' ? (settings.rates[fromCurrency] ?? null) : null,
+      crossTransfer: {
+        id: xferId,
+        sourceWorkspaceId: fromProfileId,
+        sourceWorkspaceName: fromProf.name,
+        targetWorkspaceId: toProfileId,
+        targetWorkspaceName: toProf.name,
+        role: 'source',
+        counterpartAmount: Number(toAmount),
+        counterpartCurrency: toCurrency,
+      },
+    };
+
+    const creditEntry = {
+      id: uid(),
+      type: transferType || 'income',
+      amount: Number(toAmount),
+      currency: toCurrency,
+      category: category || 'Inter-Workspace Allocation',
+      holdingSource: 'Cash in Hand',
+      note: `[Inter-Workspace Credit] Received from ${fromProf.name}${note ? ` · ${note}` : ''}`,
+      date: date || todayStr(),
+      workspaceId: toProfileId,
+      rateAtEntry: toCurrency !== 'PKR' ? (settings.rates[toCurrency] ?? null) : null,
+      crossTransfer: {
+        id: xferId,
+        sourceWorkspaceId: fromProfileId,
+        sourceWorkspaceName: fromProf.name,
+        targetWorkspaceId: toProfileId,
+        targetWorkspaceName: toProf.name,
+        role: 'target',
+        counterpartAmount: Number(fromAmount),
+        counterpartCurrency: fromCurrency,
+      },
+    };
+
+    try {
+      await supabase.from('entries').insert([
+        { ...entryToDb(debitEntry), user_id: uidVal },
+        { ...entryToDb(creditEntry), user_id: uidVal },
+      ]);
+      setEntries((prev) => [debitEntry, creditEntry, ...prev]);
+      setShowStamp(true);
+      setTimeout(() => setShowStamp(false), 900);
+      return true;
+    } catch (err) {
+      console.error('Error executing inter-workspace transfer:', err);
+      return false;
+    }
   };
 
   const handleSaveEntry = async (entryInput) => {
@@ -10544,12 +12319,13 @@ export default function App() {
             setScreen={setScreen}
             profile={activeProfile}
             profiles={profiles}
-            trashCount={trashEntries.length}
+            unreadNotificationsCount={unreadNotificationsCount}
             onOpenProfile={() => setProfileOpen(true)}
             onOpenSettings={(tab = 'workspace') => {
               setSettingsTab(tab);
               setSettingsOpen(true);
             }}
+            onOpenNotifications={() => setNotificationsOpen(true)}
             onSwitchProfile={handleSwitchProfile}
             onSignOut={async () => { await supabase.auth.signOut(); }}
             onAddEntry={() => { setEditingEntry(null); setSheetOpen(true); }}
@@ -10569,6 +12345,7 @@ export default function App() {
             open={addMenuOpen}
             onClose={() => setAddMenuOpen(false)}
             onAddEntry={() => { setEditingEntry(null); setSheetOpen(true); }}
+            onTransferWorkspace={() => { setTransferInitialData(null); setTransferModalOpen(true); }}
             onExchange={() => setExchangeSheetOpen(true)}
             onAddReminder={() => { setEditingReminder(null); setReminderSheetOpen(true); }}
             onAddUntracked={() => {
@@ -10628,6 +12405,10 @@ export default function App() {
                 currencies={activeCurrencies}
                 initialCurrency={historyCurrency}
                 onCurrencyChange={setHistoryCurrency}
+                profiles={profiles}
+                activeProfile={activeProfile}
+                onOpenWorkspaceTransfer={() => { setTransferInitialData(null); setTransferModalOpen(true); }}
+                onOpenCrossTransferAudit={(entry) => setAuditModalEntry(entry)}
                 onEdit={(e) => requestPassword(() => { setEditingEntry(e); setSheetOpen(true); })}
               />
             )}
@@ -10780,6 +12561,30 @@ export default function App() {
               setSettingsOpen(true);
             }}
           />
+          <NotificationsSheet
+            open={notificationsOpen}
+            onClose={() => setNotificationsOpen(false)}
+            entries={entries}
+            settings={settings}
+            reminders={reminders}
+            trashEntries={trashEntries}
+            profile={activeProfile}
+            userEmail={session.user.email}
+            ratesLoading={ratesLoading}
+            onRefreshRates={async () => {
+              const updated = await refreshRates(session.user.id, settings);
+              setSettings(updated);
+            }}
+            onOpenSettings={(tab = 'workspace') => {
+              setNotificationsOpen(false);
+              setSettingsTab(tab);
+              setSettingsOpen(true);
+            }}
+            onOpenReminders={() => {
+              setNotificationsOpen(false);
+              setReminderSheetOpen(true);
+            }}
+          />
           <DeleteAccountModal
             open={deleteAccountOpen}
             onClose={() => setDeleteAccountOpen(false)}
@@ -10788,6 +12593,27 @@ export default function App() {
           />
           <PasswordGate open={!!pwGate} onClose={() => setPwGate(null)} userEmail={session.user.email}
             onConfirm={() => { const fn = pwGate; setPwGate(null); if (fn) fn(); }} />
+          <InterWorkspaceTransferModal
+            open={transferModalOpen}
+            onClose={() => { setTransferModalOpen(false); setTransferInitialData(null); }}
+            onExecuteTransfer={handleExecuteInterWorkspaceTransfer}
+            profiles={profiles}
+            activeProfile={activeProfile}
+            onCreateProfile={() => {
+              setSettingsTab('workspace');
+              setSettingsOpen(true);
+            }}
+            currencies={activeCurrencies}
+            settings={settings}
+            userEmail={session.user.email}
+            initialData={transferInitialData}
+          />
+          <TransferAuditModal
+            open={!!auditModalEntry}
+            onClose={() => setAuditModalEntry(null)}
+            entry={auditModalEntry}
+            profiles={profiles}
+          />
           <ConfirmDialog
             open={!!limitWarning}
             isDanger={true}
