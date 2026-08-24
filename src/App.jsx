@@ -7,14 +7,10 @@ import {
   ArrowRightLeft, Copy, CheckCheck, ArrowUpDown, AlertTriangle, ExternalLink,
   HelpCircle, Search, Bell, Calendar, Clock, CheckCircle2, ListTodo, Trash2,
   Camera, RotateCcw, RotateCw, ZoomIn, ZoomOut, Move, Crop, Trash, Layers, Eye, EyeOff, Image, UserPlus, Upload,
-  Sliders, Undo2, Sparkles, FolderPlus, BookOpen, UploadCloud, Info,
+  Sliders, Undo2, Sparkles, FolderPlus,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from './supabaseClient';
-import { ImportSheetModal } from './components/ImportSheetModal';
-import { DisclaimerGuide } from './components/DisclaimerGuide';
-import { OnboardingWizard } from './components/OnboardingWizard';
-import { SplashScreen } from './components/SplashScreen';
 
 /* ------------------------------------------------------------------ */
 /* Design tokens                                                      */
@@ -257,10 +253,130 @@ function Card({ children, style, hover = true }) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Splash Screen                                                      */
+/* ------------------------------------------------------------------ */
+
+function SplashScreen({ onComplete }) {
+  const [stage, setStage] = useState('center'); // 'center' -> 'moving' -> 'done'
+
+  useEffect(() => {
+    // Stage 1: 'center' with pulse (0 to 1.1s)
+    const t1 = setTimeout(() => {
+      setStage('moving');
+    }, 1100);
+
+    // Stage 2: 'moving' to top and fading out (1.1s to 1.8s)
+    const t2 = setTimeout(() => {
+      setStage('done');
+      if (onComplete) onComplete();
+    }, 1750);
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [onComplete]);
+
+  if (stage === 'done') return null;
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 9999,
+        background: '#14110D',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        transition: 'opacity 0.55s cubic-bezier(0.16, 1, 0.3, 1), transform 0.55s cubic-bezier(0.16, 1, 0.3, 1)',
+        opacity: stage === 'moving' ? 0 : 1,
+        pointerEvents: 'none',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          transform: stage === 'moving' ? 'translateY(-38vh) scale(0.65)' : 'translateY(0) scale(1)',
+          transition: 'all 0.65s cubic-bezier(0.16, 1, 0.3, 1)',
+        }}
+      >
+        {/* Animated V Shield / Emblem */}
+        <div
+          style={{
+            position: 'relative',
+            width: 88,
+            height: 88,
+            borderRadius: 26,
+            background: 'linear-gradient(135deg, #1F6F52 0%, #0F3D2C 100%)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 16px 40px rgba(31,111,82,0.45)',
+            animation: 'vlfSplashPulse 0.9s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+          }}
+        >
+          <div
+            style={{
+              position: 'absolute',
+              inset: -8,
+              borderRadius: 32,
+              border: '2px solid rgba(31,111,82,0.4)',
+              animation: 'vlfGlowRing 2s ease-in-out infinite',
+            }}
+          />
+          <span
+            style={{
+              fontFamily: SERIF,
+              fontSize: 42,
+              fontWeight: 800,
+              color: '#FFFFFF',
+              letterSpacing: '-0.02em',
+              textShadow: '0 2px 10px rgba(0,0,0,0.3)',
+            }}
+          >
+            V
+          </span>
+        </div>
+
+        <div
+          style={{
+            marginTop: 18,
+            fontFamily: SERIF,
+            fontSize: 28,
+            fontWeight: 700,
+            color: '#FFFFFF',
+            letterSpacing: '0.02em',
+          }}
+        >
+          Vaultify
+        </div>
+        <div
+          style={{
+            fontSize: 12,
+            color: 'rgba(255,255,255,0.6)',
+            marginTop: 5,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+            fontWeight: 600,
+          }}
+        >
+          Wealth & Portfolio Intelligence
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Auth screen                                                        */
 /* ------------------------------------------------------------------ */
 
-function AuthScreen({ onSignedUp }) {
+function AuthScreen({ onSignupSuccess }) {
   const C = useColors();
   const [mode, setMode] = useState('signin');
   const [name, setName] = useState('');
@@ -272,14 +388,34 @@ function AuthScreen({ onSignedUp }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [info, setInfo] = useState('');
+  const [accountDeletedBanner, setAccountDeletedBanner] = useState(() => {
+    try {
+      return sessionStorage.getItem('vlf_account_deleted_banner') === '1';
+    } catch (e) {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    if (accountDeletedBanner) {
+      try {
+        sessionStorage.removeItem('vlf_account_deleted_banner');
+      } catch (e) {}
+    }
+  }, [accountDeletedBanner]);
 
   const submit = async (e) => {
     e.preventDefault();
-    setError(''); setInfo('');
+    setError('');
+    setInfo('');
 
     if (mode === 'signup') {
+      if (!name.trim()) {
+        setError('Please enter your full name.');
+        return;
+      }
       if (password.length < 6) {
-        setError('Password must be at least 6 characters.');
+        setError('Password must be at least 6 characters long.');
         return;
       }
       if (password !== confirmPassword) {
@@ -299,17 +435,29 @@ function AuthScreen({ onSignedUp }) {
           password,
           options: {
             data: {
-              full_name: name.trim() || 'Vault User',
-              name: name.trim() || 'Vault User',
+              full_name: name.trim(),
             },
           },
         });
         if (err) throw err;
-        if (name.trim()) {
-          localStorage.setItem('vaultify_temp_signup_name', name.trim());
+
+        const trimmedName = name.trim();
+        try {
+          localStorage.setItem('vlf_pending_onboarding_name', trimmedName);
+          if (data?.user?.id) {
+            localStorage.setItem(`vlf_pending_onboarding_${data.user.id}`, trimmedName);
+          }
+        } catch (e) {}
+
+        if (onSignupSuccess) {
+          onSignupSuccess(trimmedName);
         }
-        if (onSignedUp) onSignedUp(name.trim());
-        setInfo('Account created! If email confirmation is enabled in your project, check your inbox. Otherwise you will be logged in.');
+
+        if (data?.session) {
+          setInfo('Account created successfully! Preparing your setup wizard…');
+        } else {
+          setInfo('Account created! If email confirmation is enabled in your Supabase project, check your inbox before signing in.');
+        }
       } else if (mode === 'forgot') {
         const { error: err } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
         if (err) throw err;
@@ -324,106 +472,251 @@ function AuthScreen({ onSignedUp }) {
 
   return (
     <div style={{ minHeight: '100vh', background: `linear-gradient(180deg, ${C.navy} 0%, ${C.navySoft} 45%, ${C.ice} 45%)`, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, fontFamily: SANS }}>
-      <div style={{ width: '100%', maxWidth: 390 }}>
+      <div style={{ width: '100%', maxWidth: 410 }}>
+        {/* Top Logo and Header */}
         <div style={{ textAlign: 'center', marginBottom: 24, color: '#fff' }}>
-          <div style={{ width: 54, height: 54, margin: '0 auto 12px', borderRadius: 18, background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}>
-            <ShieldCheck size={26} color="#fff" />
+          <div style={{
+            width: 58,
+            height: 58,
+            margin: '0 auto 12px',
+            borderRadius: 18,
+            background: 'linear-gradient(135deg, #1F6F52 0%, #0F3D2C 100%)',
+            border: '1px solid rgba(255,255,255,0.25)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 10px 24px rgba(0,0,0,0.3)',
+          }}>
+            <span style={{ fontFamily: SERIF, fontSize: 28, fontWeight: 800, color: '#FFFFFF' }}>V</span>
           </div>
-          <div style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 700, letterSpacing: '0.01em' }}>Vaultify</div>
-          <div style={{ fontSize: 12.5, opacity: 0.8, marginTop: 4 }}>Private, multi-currency net worth tracking</div>
+          <div style={{ fontFamily: SERIF, fontSize: 27, fontWeight: 700, letterSpacing: '0.01em' }}>Vaultify</div>
+          <div style={{ fontSize: 12.5, opacity: 0.75, marginTop: 4 }}>Private, multi-currency wealth & net worth tracking</div>
         </div>
-        <Card style={{ padding: 22, boxShadow: '0 12px 36px rgba(20,17,13,0.18)' }}>
+
+        <Card style={{ padding: 24 }}>
+          {accountDeletedBanner && (
+            <div style={{
+              background: '#1E9E6410',
+              border: '1.5px solid #1E9E6438',
+              borderRadius: 14,
+              padding: '12px 14px',
+              marginBottom: 18,
+              animation: 'vlfPop .35s cubic-bezier(.34,1.56,.64,1)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                <div style={{
+                  width: 28, height: 28, borderRadius: '50%', background: '#1E9E6422',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1,
+                }}>
+                  <CheckCircle2 size={17} color="#1E9E64" strokeWidth={2.5} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: '#11653E', marginBottom: 2 }}>
+                    Your account was deleted successfully
+                  </div>
+                  <div style={{ fontSize: 11.5, color: '#1B7247', lineHeight: 1.4 }}>
+                    All your portfolio entries, active currencies, workspaces, and records have been permanently wiped.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAccountDeletedBanner(false)}
+                  aria-label="Dismiss message"
+                  style={{ background: 'none', border: 'none', color: '#1B7247', cursor: 'pointer', padding: 2, display: 'flex' }}
+                >
+                  <X size={15} />
+                </button>
+              </div>
+
+              <div style={{
+                marginTop: 8,
+                paddingTop: 8,
+                borderTop: '1px solid #1E9E6422',
+                fontSize: 11,
+                color: '#1B7247',
+                lineHeight: 1.45,
+              }}>
+                <strong>Disclaimer:</strong> Your email has been released. You can click <strong>"Create account"</strong> above at any time to start fresh with a clean portfolio.
+              </div>
+            </div>
+          )}
+
           {mode !== 'forgot' && (
             <div style={{ display: 'flex', gap: 6, marginBottom: 18, background: C.ice, padding: 4, borderRadius: 12 }}>
               {['signin', 'signup'].map((m) => (
-                <button key={m} onClick={() => { setMode(m); setError(''); setInfo(''); }} style={{
-                  flex: 1, padding: '9px 0', borderRadius: 9, border: 'none', fontSize: 13, fontWeight: 700,
-                  background: mode === m ? '#fff' : 'transparent', color: mode === m ? C.navy : C.muted,
-                  boxShadow: mode === m ? '0 1px 3px rgba(26,23,18,0.12)' : 'none', cursor: 'pointer',
-                }}>
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => { setMode(m); setError(''); setInfo(''); }}
+                  style={{
+                    flex: 1, padding: '9px 0', borderRadius: 9, border: 'none', fontSize: 13, fontWeight: 700,
+                    background: mode === m ? '#fff' : 'transparent', color: mode === m ? C.navy : C.muted,
+                    boxShadow: mode === m ? '0 1px 3px rgba(26,23,18,0.12)' : 'none',
+                    cursor: 'pointer',
+                    transition: 'all .15s ease',
+                  }}
+                >
                   {m === 'signin' ? 'Sign in' : 'Create account'}
                 </button>
               ))}
             </div>
           )}
+
           {mode === 'forgot' && (
             <div style={{ marginBottom: 16 }}>
-              <div style={{ fontFamily: SERIF, fontSize: 17, fontWeight: 600, color: C.heading, marginBottom: 4 }}>Reset password</div>
-              <div style={{ fontSize: 12.5, color: C.muted }}>We'll email you a link to set a new password.</div>
+              <div style={{ fontFamily: SERIF, fontSize: 18, fontWeight: 600, color: C.heading, marginBottom: 4 }}>Reset password</div>
+              <div style={{ fontSize: 12.5, color: C.muted }}>We'll email you a secure link to set a new password.</div>
             </div>
           )}
+
           <form onSubmit={submit}>
+            {/* Full Name for Signup */}
             {mode === 'signup' && (
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ fontSize: 12, fontWeight: 600, color: C.navySoft, display: 'block', marginBottom: 5 }}>Full Name</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Haseeb"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  style={{ width: '100%', border: `1px solid ${C.line}`, borderRadius: 10, padding: '11px 13px', fontSize: 14, outline: 'none', fontFamily: SANS, background: C.surface, color: C.navySoft, boxSizing: 'border-box' }}
-                />
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: C.navySoft, display: 'block', marginBottom: 6 }}>
+                  Full Name
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. John Doe"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    style={{
+                      width: '100%',
+                      border: `1px solid ${C.line}`,
+                      borderRadius: 10,
+                      padding: '11px 13px',
+                      fontSize: 14,
+                      outline: 'none',
+                      fontFamily: SANS,
+                      background: '#FFFFFF',
+                    }}
+                  />
+                </div>
               </div>
             )}
 
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: C.navySoft, display: 'block', marginBottom: 5 }}>Email</label>
+            {/* Email field */}
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: C.navySoft, display: 'block', marginBottom: 6 }}>
+                Email address
+              </label>
               <input
                 type="email"
                 required
-                placeholder="you@example.com"
+                placeholder="name@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                style={{ width: '100%', border: `1px solid ${C.line}`, borderRadius: 10, padding: '11px 13px', fontSize: 14, outline: 'none', fontFamily: SANS, background: C.surface, color: C.navySoft, boxSizing: 'border-box' }}
+                style={{
+                  width: '100%',
+                  border: `1px solid ${C.line}`,
+                  borderRadius: 10,
+                  padding: '11px 13px',
+                  fontSize: 14,
+                  outline: 'none',
+                  fontFamily: SANS,
+                  background: '#FFFFFF',
+                }}
               />
             </div>
 
+            {/* Password field with Show/Hide Eye Toggle */}
             {mode !== 'forgot' && (
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ fontSize: 12, fontWeight: 600, color: C.navySoft, display: 'block', marginBottom: 5 }}>Password</label>
-                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: C.navySoft, display: 'block', marginBottom: 6 }}>
+                  Password
+                </label>
+                <div style={{ position: 'relative' }}>
                   <input
                     type={showPassword ? 'text' : 'password'}
                     required
                     minLength={6}
-                    placeholder="Min 6 characters"
+                    placeholder="At least 6 characters"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    style={{ width: '100%', border: `1px solid ${C.line}`, borderRadius: 10, padding: '11px 40px 11px 13px', fontSize: 14, outline: 'none', fontFamily: SANS, background: C.surface, color: C.navySoft, boxSizing: 'border-box' }}
+                    style={{
+                      width: '100%',
+                      border: `1px solid ${C.line}`,
+                      borderRadius: 10,
+                      padding: '11px 40px 11px 13px',
+                      fontSize: 14,
+                      outline: 'none',
+                      fontFamily: SANS,
+                      background: '#FFFFFF',
+                    }}
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
-                    style={{ position: 'absolute', right: 10, background: 'none', border: 'none', color: C.muted, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 4 }}
-                    title={showPassword ? 'Hide password' : 'Show password'}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    style={{
+                      position: 'absolute',
+                      right: 10,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: C.muted,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: 4,
+                    }}
                   >
-                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
                   </button>
                 </div>
               </div>
             )}
 
+            {/* Re-enter Password for Signup with Eye Toggle */}
             {mode === 'signup' && (
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ fontSize: 12, fontWeight: 600, color: C.navySoft, display: 'block', marginBottom: 5 }}>Re-enter Password</label>
-                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: C.navySoft, display: 'block', marginBottom: 6 }}>
+                  Re-enter Password
+                </label>
+                <div style={{ position: 'relative' }}>
                   <input
                     type={showConfirmPassword ? 'text' : 'password'}
                     required
                     minLength={6}
-                    placeholder="Repeat your password"
+                    placeholder="Confirm your password"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
-                    style={{ width: '100%', border: `1px solid ${C.line}`, borderRadius: 10, padding: '11px 40px 11px 13px', fontSize: 14, outline: 'none', fontFamily: SANS, background: C.surface, color: C.navySoft, boxSizing: 'border-box' }}
+                    style={{
+                      width: '100%',
+                      border: `1px solid ${C.line}`,
+                      borderRadius: 10,
+                      padding: '11px 40px 11px 13px',
+                      fontSize: 14,
+                      outline: 'none',
+                      fontFamily: SANS,
+                      background: '#FFFFFF',
+                    }}
                   />
                   <button
                     type="button"
                     onClick={() => setShowConfirmPassword((v) => !v)}
-                    style={{ position: 'absolute', right: 10, background: 'none', border: 'none', color: C.muted, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 4 }}
-                    title={showConfirmPassword ? 'Hide password' : 'Show password'}
+                    aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                    style={{
+                      position: 'absolute',
+                      right: 10,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: C.muted,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: 4,
+                    }}
                   >
-                    {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    {showConfirmPassword ? <EyeOff size={17} /> : <Eye size={17} />}
                   </button>
                 </div>
               </div>
@@ -431,36 +724,823 @@ function AuthScreen({ onSignedUp }) {
 
             {mode === 'signin' && (
               <div style={{ textAlign: 'right', marginBottom: 12 }}>
-                <button type="button" onClick={() => { setMode('forgot'); setError(''); setInfo(''); }}
-                  style={{ background: 'none', border: 'none', color: C.steel, fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: 0 }}>
+                <button
+                  type="button"
+                  onClick={() => { setMode('forgot'); setError(''); setInfo(''); }}
+                  style={{ background: 'none', border: 'none', color: C.steel, fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: 0 }}
+                >
                   Forgot password?
                 </button>
               </div>
             )}
-            {error && <div style={{ fontSize: 12.5, color: '#7A2E2E', marginBottom: 12, background: '#7A2E2E10', padding: '8px 12px', borderRadius: 8 }}>{error}</div>}
-            {info && <div style={{ fontSize: 12.5, color: '#39604A', marginBottom: 12, background: '#39604A10', padding: '8px 12px', borderRadius: 8 }}>{info}</div>}
-            <button type="submit" disabled={loading} style={{
-              width: '100%', padding: '13px', borderRadius: 12, border: 'none', background: C.navy, color: '#fff',
-              fontSize: 14.5, fontWeight: 700, opacity: loading ? 0.7 : 1, cursor: 'pointer',
-              boxShadow: '0 4px 14px rgba(20,17,13,0.15)',
-            }}>
-              {loading ? 'Please wait…' : mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Send reset link'}
+
+            {error && (
+              <div style={{ fontSize: 12.5, color: '#A82D2D', background: '#FDF2F2', border: '1px solid #F8D7DA', padding: '8px 12px', borderRadius: 8, marginBottom: 14 }}>
+                {error}
+              </div>
+            )}
+            {info && (
+              <div style={{ fontSize: 12.5, color: '#1F6F52', background: '#F0F9F5', border: '1px solid #D1E7DD', padding: '8px 12px', borderRadius: 8, marginBottom: 14 }}>
+                {info}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              style={{
+                width: '100%',
+                padding: '13px',
+                borderRadius: 12,
+                border: 'none',
+                background: C.navy,
+                color: '#fff',
+                fontSize: 14.5,
+                fontWeight: 700,
+                cursor: 'pointer',
+                opacity: loading ? 0.7 : 1,
+                boxShadow: '0 4px 14px rgba(20,17,13,0.2)',
+                transition: 'all .15s ease',
+              }}
+            >
+              {loading ? 'Please wait…' : mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create Account & Setup' : 'Send reset link'}
             </button>
+
             {mode === 'forgot' && (
-              <button type="button" onClick={() => { setMode('signin'); setError(''); setInfo(''); }}
-                style={{ width: '100%', padding: '11px', borderRadius: 12, border: 'none', background: 'none', color: C.muted, fontSize: 12.5, fontWeight: 600, marginTop: 8, cursor: 'pointer' }}>
+              <button
+                type="button"
+                onClick={() => { setMode('signin'); setError(''); setInfo(''); }}
+                style={{ width: '100%', padding: '11px', borderRadius: 12, border: 'none', background: 'none', color: C.muted, fontSize: 12.5, fontWeight: 600, marginTop: 8, cursor: 'pointer' }}
+              >
                 Back to sign in
               </button>
             )}
           </form>
         </Card>
-        <div style={{ textAlign: 'center', fontSize: 11.5, color: C.navySoft, opacity: 0.7, marginTop: 16 }}>
-          Encrypted, private, and synced across all your devices.
+
+        <div style={{ textAlign: 'center', fontSize: 11.5, color: C.navySoft, opacity: 0.6, marginTop: 16 }}>
+          Same account, real-time sync on mobile, tablet & desktop.
         </div>
       </div>
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* Post-Signup Onboarding Wizard                                      */
+/* ------------------------------------------------------------------ */
+
+function OnboardingWizard({ user, initialName = '', onComplete, currentTheme = 'light' }) {
+  const stepStorageKey = user?.id ? `vlf_onboarding_step_${user.id}` : 'vlf_onboarding_step_temp';
+  const [step, setStep] = useState(() => {
+    try {
+      const saved = localStorage.getItem(stepStorageKey);
+      if (saved && ['1', '2', '3'].includes(saved)) {
+        return parseInt(saved, 10);
+      }
+    } catch (e) {}
+    return 1;
+  }); // 1 = Vault Name, 2 = Theme, 3 = Currencies
+  const [animStage, setAnimStage] = useState('center'); // 'center' (first 1.8s) -> 'top'
+
+  // Step 1: Vault Name
+  const resolvedName = initialName || user?.user_metadata?.full_name || 'My';
+  const [vaultName, setVaultName] = useState(() => {
+    if (resolvedName && resolvedName !== 'My') {
+      return `${resolvedName}'s Vault`;
+    }
+    return 'Personal Vault';
+  });
+
+  // Step 2: Theme
+  const [selectedTheme, setSelectedTheme] = useState(currentTheme || 'light');
+
+  // Step 3: Currencies
+  const [selectedCurrencies, setSelectedCurrencies] = useState(['PKR', 'USD', 'EUR', 'GBP', 'TRY', 'USDT']);
+  const [primaryCurrency, setPrimaryCurrency] = useState('PKR');
+
+  // Additional available currencies user can add
+  const ALL_ADDITIONAL_CURRENCIES = [
+    { code: 'AED', name: 'UAE Dirham', symbol: 'د.إ', flag: '🇦🇪' },
+    { code: 'SAR', name: 'Saudi Riyal', symbol: '﷼', flag: '🇸🇦' },
+    { code: 'CAD', name: 'Canadian Dollar', symbol: '$', flag: '🇨🇦' },
+    { code: 'AUD', name: 'Australian Dollar', symbol: '$', flag: '🇦🇺' },
+    { code: 'INR', name: 'Indian Rupee', symbol: '₹', flag: '🇮🇳' },
+    { code: 'CNY', name: 'Chinese Yuan', symbol: '¥', flag: '🇨🇳' },
+  ];
+
+  // Dynamic colors for wizard based on chosen theme
+  const C = selectedTheme === 'dark' ? DARK_COLORS : LIGHT_COLORS;
+
+  const changeStep = (nextStep) => {
+    setStep(nextStep);
+    try {
+      localStorage.setItem(stepStorageKey, String(nextStep));
+    } catch (e) {}
+  };
+
+  const handleRestartSetup = () => {
+    try {
+      localStorage.removeItem(stepStorageKey);
+      localStorage.removeItem('vlf_onboarding_step_temp');
+      if (user?.id) localStorage.removeItem(`vlf_onboarding_step_${user.id}`);
+    } catch (e) {}
+    setStep(1);
+    setAnimStage('center');
+    setVaultName(resolvedName && resolvedName !== 'My' ? `${resolvedName}'s Vault` : 'Personal Vault');
+    setSelectedTheme(currentTheme || 'light');
+    setSelectedCurrencies(['PKR', 'USD', 'EUR', 'GBP', 'TRY', 'USDT']);
+    setPrimaryCurrency('PKR');
+  };
+
+  // Handle center-to-top animation timer on step change
+  useEffect(() => {
+    setAnimStage('center');
+    const timer = setTimeout(() => {
+      setAnimStage('top');
+    }, 1800);
+    return () => clearTimeout(timer);
+  }, [step]);
+
+  const toggleCurrency = (code) => {
+    setSelectedCurrencies((prev) => {
+      if (prev.includes(code)) {
+        if (prev.length <= 1) return prev; // Keep at least one
+        const filtered = prev.filter((c) => c !== code);
+        if (primaryCurrency === code) {
+          setPrimaryCurrency(filtered[0] || 'PKR');
+        }
+        return filtered;
+      } else {
+        return [...prev, code];
+      }
+    });
+  };
+
+  const handleFinish = () => {
+    if (onComplete) {
+      onComplete({
+        vaultName: vaultName.trim() || 'Personal Vault',
+        theme: selectedTheme,
+        currencies: selectedCurrencies.length > 0 ? selectedCurrencies : ['PKR', 'USD'],
+        displayCurrency: selectedCurrencies.includes(primaryCurrency) ? primaryCurrency : selectedCurrencies[0] || 'PKR',
+      });
+    }
+  };
+
+  return (
+    <div
+      style={{
+        minHeight: '100vh',
+        background: C.ice,
+        color: C.heading,
+        fontFamily: SANS,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '24px 18px',
+        position: 'relative',
+        overflowX: 'hidden',
+        transition: 'background 0.3s ease, color 0.3s ease',
+      }}
+    >
+      {/* Background soft ambient decoration */}
+      <div
+        style={{
+          position: 'absolute',
+          top: -100,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: 500,
+          height: 300,
+          borderRadius: '50%',
+          background: selectedTheme === 'dark' ? 'rgba(31,111,82,0.15)' : 'rgba(31,111,82,0.08)',
+          filter: 'blur(80px)',
+          pointerEvents: 'none',
+        }}
+      />
+
+      <div style={{ width: '100%', maxWidth: 440, zIndex: 1, position: 'relative' }}>
+        {/* Step Progress Indicators */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 20 }}>
+          {[1, 2, 3].map((s) => (
+            <div
+              key={s}
+              style={{
+                height: 4,
+                flex: 1,
+                borderRadius: 4,
+                background: s === step ? (selectedTheme === 'dark' ? '#10B981' : '#1F6F52') : s < step ? (selectedTheme === 'dark' ? 'rgba(16,185,129,0.5)' : 'rgba(31,111,82,0.4)') : C.line,
+                transition: 'all 0.3s ease',
+              }}
+            />
+          ))}
+        </div>
+
+        {/* ------------------------------------------------------------- */}
+        {/* STEP 1: Welcome & Name of Vault                               */}
+        {/* ------------------------------------------------------------- */}
+        {step === 1 && (
+          <div style={{ width: '100%' }}>
+            {/* Animated Welcome Header (Center for 2s, then animates to Top) */}
+            <div
+              style={{
+                textAlign: 'center',
+                transition: 'all 0.75s cubic-bezier(0.16, 1, 0.3, 1)',
+                marginBottom: animStage === 'top' ? 20 : 0,
+                transform: animStage === 'center' ? 'scale(1.08) translateY(12vh)' : 'scale(1) translateY(0)',
+              }}
+            >
+              <div
+                style={{
+                  width: animStage === 'center' ? 76 : 52,
+                  height: animStage === 'center' ? 76 : 52,
+                  margin: '0 auto 12px',
+                  borderRadius: animStage === 'center' ? 24 : 16,
+                  background: 'linear-gradient(135deg, #1F6F52 0%, #0F3D2C 100%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 12px 30px rgba(31,111,82,0.35)',
+                  transition: 'all 0.75s cubic-bezier(0.16, 1, 0.3, 1)',
+                }}
+              >
+                <span style={{ fontFamily: SERIF, fontSize: animStage === 'center' ? 36 : 24, fontWeight: 800, color: '#fff' }}>
+                  V
+                </span>
+              </div>
+              <h1
+                style={{
+                  fontFamily: SERIF,
+                  fontSize: animStage === 'center' ? 30 : 23,
+                  fontWeight: 700,
+                  color: C.heading,
+                  margin: 0,
+                  letterSpacing: '0.01em',
+                  transition: 'all 0.75s cubic-bezier(0.16, 1, 0.3, 1)',
+                }}
+              >
+                Welcome to Vaultify
+              </h1>
+              <p
+                style={{
+                  fontSize: animStage === 'center' ? 14 : 12.5,
+                  color: C.muted,
+                  margin: '6px 0 0',
+                  transition: 'all 0.75s cubic-bezier(0.16, 1, 0.3, 1)',
+                }}
+              >
+                {animStage === 'center'
+                  ? 'Initializing your private wealth manager…'
+                  : 'Step 1 of 3 · Basic Setup'}
+              </p>
+            </div>
+
+            {/* Step 1 Setup Card (Fades in when animation moves to top or immediately accessible) */}
+            <div
+              className="vlf-animate-fade-in"
+              style={{
+                background: C.surface,
+                border: `1.5px solid ${C.line}`,
+                borderRadius: 20,
+                padding: '22px 20px',
+                boxShadow: '0 10px 28px rgba(0,0,0,0.06)',
+                opacity: animStage === 'top' ? 1 : 0.2,
+                pointerEvents: animStage === 'top' ? 'auto' : 'none',
+                transition: 'opacity 0.6s ease',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                <div style={{ width: 30, height: 30, borderRadius: 9, background: 'rgba(31,111,82,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Landmark size={16} color={selectedTheme === 'dark' ? '#10B981' : '#1F6F52'} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: C.heading }}>Name your Vault</div>
+                  <div style={{ fontSize: 11.5, color: C.muted }}>Give your main financial workspace a name</div>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <input
+                  type="text"
+                  value={vaultName}
+                  onChange={(e) => setVaultName(e.target.value)}
+                  placeholder="e.g. Personal Vault"
+                  style={{
+                    width: '100%',
+                    border: `1.5px solid ${C.line}`,
+                    borderRadius: 12,
+                    padding: '13px 14px',
+                    fontSize: 15,
+                    fontWeight: 600,
+                    color: C.heading,
+                    background: C.ice,
+                    outline: 'none',
+                    fontFamily: SANS,
+                  }}
+                />
+              </div>
+
+              {/* Preset suggestions */}
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', marginBottom: 8, letterSpacing: '0.03em' }}>
+                  Quick presets:
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {['Personal Vault', 'My Main Vault', 'Business & Trading', 'Family Wealth'].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setVaultName(preset)}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: 8,
+                        fontSize: 11.5,
+                        fontWeight: 600,
+                        border: `1px solid ${vaultName === preset ? (selectedTheme === 'dark' ? '#10B981' : '#1F6F52') : C.line}`,
+                        background: vaultName === preset ? (selectedTheme === 'dark' ? 'rgba(16,185,129,0.15)' : 'rgba(31,111,82,0.1)') : C.ice,
+                        color: vaultName === preset ? (selectedTheme === 'dark' ? '#10B981' : '#1F6F52') : C.muted,
+                        cursor: 'pointer',
+                        transition: 'all .15s ease',
+                      }}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => changeStep(2)}
+                style={{
+                  width: '100%',
+                  padding: '13px',
+                  borderRadius: 12,
+                  border: 'none',
+                  background: selectedTheme === 'dark' ? '#10B981' : C.navy,
+                  color: selectedTheme === 'dark' ? '#0F1412' : '#fff',
+                  fontSize: 14.5,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  boxShadow: '0 4px 14px rgba(0,0,0,0.15)',
+                }}
+              >
+                <span>Continue to Step 2</span>
+                <ChevronRight size={18} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------- */}
+        {/* STEP 2: Welcome [NAME] & Theme Selection                      */}
+        {/* ------------------------------------------------------------- */}
+        {step === 2 && (
+          <div style={{ width: '100%' }}>
+            {/* Animated Welcome [NAME] Header */}
+            <div
+              style={{
+                textAlign: 'center',
+                transition: 'all 0.75s cubic-bezier(0.16, 1, 0.3, 1)',
+                marginBottom: animStage === 'top' ? 20 : 0,
+                transform: animStage === 'center' ? 'scale(1.08) translateY(12vh)' : 'scale(1) translateY(0)',
+              }}
+            >
+              <div
+                style={{
+                  width: animStage === 'center' ? 70 : 48,
+                  height: animStage === 'center' ? 70 : 48,
+                  margin: '0 auto 10px',
+                  borderRadius: animStage === 'center' ? 22 : 14,
+                  background: 'linear-gradient(135deg, #1F6F52 0%, #0F3D2C 100%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 10px 24px rgba(31,111,82,0.3)',
+                  transition: 'all 0.75s cubic-bezier(0.16, 1, 0.3, 1)',
+                }}
+              >
+                <Sparkles size={animStage === 'center' ? 32 : 22} color="#fff" />
+              </div>
+              <h1
+                style={{
+                  fontFamily: SERIF,
+                  fontSize: animStage === 'center' ? 28 : 22,
+                  fontWeight: 700,
+                  color: C.heading,
+                  margin: 0,
+                  letterSpacing: '0.01em',
+                  transition: 'all 0.75s cubic-bezier(0.16, 1, 0.3, 1)',
+                }}
+              >
+                Welcome {resolvedName ? resolvedName : 'User'}, to Vaultify!
+              </h1>
+              <p
+                style={{
+                  fontSize: animStage === 'center' ? 14 : 12.5,
+                  color: C.muted,
+                  margin: '6px 0 0',
+                  transition: 'all 0.75s cubic-bezier(0.16, 1, 0.3, 1)',
+                }}
+              >
+                {animStage === 'center'
+                  ? 'Customizing your workspace appearance…'
+                  : 'Step 2 of 3 · Select your Theme'}
+              </p>
+            </div>
+
+            {/* Step 2 Theme Selector Card */}
+            <div
+              className="vlf-animate-fade-in"
+              style={{
+                background: C.surface,
+                border: `1.5px solid ${C.line}`,
+                borderRadius: 20,
+                padding: '22px 20px',
+                boxShadow: '0 10px 28px rgba(0,0,0,0.06)',
+                opacity: animStage === 'top' ? 1 : 0.2,
+                pointerEvents: animStage === 'top' ? 'auto' : 'none',
+                transition: 'opacity 0.6s ease',
+              }}
+            >
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.heading, marginBottom: 12 }}>
+                Choose your visual style
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
+                {/* Light Theme Card */}
+                <div
+                  onClick={() => setSelectedTheme('light')}
+                  style={{
+                    padding: 14,
+                    borderRadius: 14,
+                    cursor: 'pointer',
+                    background: '#FAF7EF',
+                    border: `2px solid ${selectedTheme === 'light' ? '#1F6F52' : 'rgba(20,40,32,0.12)'}`,
+                    boxShadow: selectedTheme === 'light' ? '0 4px 16px rgba(31,111,82,0.2)' : 'none',
+                    transition: 'all .2s ease',
+                    position: 'relative',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Sun size={16} color="#1F6F52" />
+                      <span style={{ fontSize: 13, fontWeight: 700, color: '#14110D' }}>Light</span>
+                    </div>
+                    <div
+                      style={{
+                        width: 18,
+                        height: 18,
+                        borderRadius: '50%',
+                        border: `2px solid ${selectedTheme === 'light' ? '#1F6F52' : '#7C8983'}`,
+                        background: selectedTheme === 'light' ? '#1F6F52' : 'transparent',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      {selectedTheme === 'light' && <Check size={11} color="#fff" strokeWidth={3} />}
+                    </div>
+                  </div>
+                  <div style={{ background: '#FFFFFF', padding: 8, borderRadius: 8, border: '1px solid rgba(20,40,32,0.08)' }}>
+                    <div style={{ fontSize: 9, color: '#7C8983', fontWeight: 600 }}>Balance</div>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: '#14110D', fontFamily: MONO }}>Rs 125,000</div>
+                  </div>
+                  <div style={{ fontSize: 10, color: '#7C8983', marginTop: 8, fontWeight: 600 }}>
+                    Crisp ivory & emerald
+                  </div>
+                </div>
+
+                {/* Dark Theme Card */}
+                <div
+                  onClick={() => setSelectedTheme('dark')}
+                  style={{
+                    padding: 14,
+                    borderRadius: 14,
+                    cursor: 'pointer',
+                    background: '#0F1412',
+                    border: `2px solid ${selectedTheme === 'dark' ? '#10B981' : 'rgba(255,255,255,0.1)'}`,
+                    boxShadow: selectedTheme === 'dark' ? '0 4px 16px rgba(16,185,129,0.25)' : 'none',
+                    transition: 'all .2s ease',
+                    position: 'relative',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Moon size={16} color="#10B981" />
+                      <span style={{ fontSize: 13, fontWeight: 700, color: '#F3F4F6' }}>Dark</span>
+                    </div>
+                    <div
+                      style={{
+                        width: 18,
+                        height: 18,
+                        borderRadius: '50%',
+                        border: `2px solid ${selectedTheme === 'dark' ? '#10B981' : '#6B7280'}`,
+                        background: selectedTheme === 'dark' ? '#10B981' : 'transparent',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      {selectedTheme === 'dark' && <Check size={11} color="#0F1412" strokeWidth={3} />}
+                    </div>
+                  </div>
+                  <div style={{ background: '#161D1A', padding: 8, borderRadius: 8, border: '1px solid rgba(255,255,255,0.08)' }}>
+                    <div style={{ fontSize: 9, color: '#9CA3AF', fontWeight: 600 }}>Balance</div>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: '#FFFFFF', fontFamily: MONO }}>Rs 125,000</div>
+                  </div>
+                  <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 8, fontWeight: 600 }}>
+                    Obsidian & mint glow
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  type="button"
+                  onClick={() => changeStep(1)}
+                  style={{
+                    padding: '12px 18px',
+                    borderRadius: 12,
+                    border: `1px solid ${C.line}`,
+                    background: 'transparent',
+                    color: C.heading,
+                    fontSize: 13.5,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Back
+                </button>
+                <button
+                  type="button"
+                  onClick={() => changeStep(3)}
+                  style={{
+                    flex: 1,
+                    padding: '13px',
+                    borderRadius: 12,
+                    border: 'none',
+                    background: selectedTheme === 'dark' ? '#10B981' : C.navy,
+                    color: selectedTheme === 'dark' ? '#0F1412' : '#fff',
+                    fontSize: 14.5,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    boxShadow: '0 4px 14px rgba(0,0,0,0.15)',
+                  }}
+                >
+                  <span>Continue to Step 3</span>
+                  <ChevronRight size={18} />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------- */}
+        {/* STEP 3: Currencies Selection & Add Options                    */}
+        {/* ------------------------------------------------------------- */}
+        {step === 3 && (
+          <div style={{ width: '100%' }}>
+            {/* Step 3 Header */}
+            <div style={{ textAlign: 'center', marginBottom: 18 }}>
+              <div
+                style={{
+                  width: 48,
+                  height: 48,
+                  margin: '0 auto 10px',
+                  borderRadius: 14,
+                  background: 'linear-gradient(135deg, #1F6F52 0%, #0F3D2C 100%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 8px 20px rgba(31,111,82,0.3)',
+                }}
+              >
+                <Banknote size={22} color="#fff" />
+              </div>
+              <h1 style={{ fontFamily: SERIF, fontSize: 22, fontWeight: 700, color: C.heading, margin: 0 }}>
+                Select Currencies
+              </h1>
+              <p style={{ fontSize: 12.5, color: C.muted, margin: '4px 0 0' }}>
+                Step 3 of 3 · Choose which currencies you want to track
+              </p>
+            </div>
+
+            {/* Currencies Setup Card */}
+            <div
+              className="vlf-animate-fade-in"
+              style={{
+                background: C.surface,
+                border: `1.5px solid ${C.line}`,
+                borderRadius: 20,
+                padding: '20px 18px',
+                boxShadow: '0 10px 28px rgba(0,0,0,0.06)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.heading }}>Primary Core Currencies</span>
+                <span style={{ fontSize: 11, color: C.muted }}>Tap to enable/disable</span>
+              </div>
+
+              {/* Core Currencies Grid */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginBottom: 16 }}>
+                {CURRENCIES.map((code) => {
+                  const meta = CURRENCY_META[code] || {};
+                  const isSelected = selectedCurrencies.includes(code);
+                  return (
+                    <button
+                      key={code}
+                      type="button"
+                      onClick={() => toggleCurrency(code)}
+                      style={{
+                        padding: '10px 12px',
+                        borderRadius: 12,
+                        border: `1.5px solid ${isSelected ? (selectedTheme === 'dark' ? '#10B981' : '#1F6F52') : C.line}`,
+                        background: isSelected ? (selectedTheme === 'dark' ? 'rgba(16,185,129,0.12)' : 'rgba(31,111,82,0.08)') : C.ice,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        cursor: 'pointer',
+                        transition: 'all .15s ease',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 16 }}>{meta.flag || '🪙'}</span>
+                        <div style={{ textAlign: 'left' }}>
+                          <div style={{ fontSize: 13, fontWeight: 800, color: C.heading }}>{code}</div>
+                          <div style={{ fontSize: 10, color: C.muted }}>{meta.cleanSymbol || code}</div>
+                        </div>
+                      </div>
+                      <div
+                        style={{
+                          width: 18,
+                          height: 18,
+                          borderRadius: '50%',
+                          border: `1.5px solid ${isSelected ? (selectedTheme === 'dark' ? '#10B981' : '#1F6F52') : C.line}`,
+                          background: isSelected ? (selectedTheme === 'dark' ? '#10B981' : '#1F6F52') : 'transparent',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        {isSelected && <Check size={11} color={selectedTheme === 'dark' ? '#0F1412' : '#fff'} strokeWidth={3} />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Additional Global Currencies Section */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: C.muted, textTransform: 'uppercase', marginBottom: 8, letterSpacing: '0.03em' }}>
+                  Add More Currencies:
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {ALL_ADDITIONAL_CURRENCIES.map((c) => {
+                    const isSelected = selectedCurrencies.includes(c.code);
+                    return (
+                      <button
+                        key={c.code}
+                        type="button"
+                        onClick={() => toggleCurrency(c.code)}
+                        style={{
+                          padding: '6px 10px',
+                          borderRadius: 8,
+                          fontSize: 11.5,
+                          fontWeight: 700,
+                          border: `1px solid ${isSelected ? (selectedTheme === 'dark' ? '#10B981' : '#1F6F52') : C.line}`,
+                          background: isSelected ? (selectedTheme === 'dark' ? 'rgba(16,185,129,0.18)' : 'rgba(31,111,82,0.12)') : C.ice,
+                          color: isSelected ? (selectedTheme === 'dark' ? '#10B981' : '#1F6F52') : C.heading,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 5,
+                          cursor: 'pointer',
+                          transition: 'all .15s ease',
+                        }}
+                      >
+                        <span>{c.flag}</span>
+                        <span>{c.code}</span>
+                        {isSelected ? <Check size={12} strokeWidth={2.5} /> : <Plus size={12} />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Base Display Currency Picker */}
+              <div style={{ padding: '12px 14px', background: C.ice, borderRadius: 12, border: `1px solid ${C.line}`, marginBottom: 20 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.heading, marginBottom: 6 }}>
+                  Default Display Currency
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {selectedCurrencies.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setPrimaryCurrency(c)}
+                      style={{
+                        padding: '5px 10px',
+                        borderRadius: 6,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        border: `1px solid ${primaryCurrency === c ? (selectedTheme === 'dark' ? '#10B981' : '#1F6F52') : C.line}`,
+                        background: primaryCurrency === c ? (selectedTheme === 'dark' ? '#10B981' : '#1F6F52') : C.surface,
+                        color: primaryCurrency === c ? '#fff' : C.heading,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {c}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  type="button"
+                  onClick={() => changeStep(2)}
+                  style={{
+                    padding: '12px 16px',
+                    borderRadius: 12,
+                    border: `1px solid ${C.line}`,
+                    background: 'transparent',
+                    color: C.heading,
+                    fontSize: 13.5,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Back
+                </button>
+                <button
+                  type="button"
+                  onClick={handleFinish}
+                  style={{
+                    flex: 1,
+                    padding: '13px',
+                    borderRadius: 12,
+                    border: 'none',
+                    background: selectedTheme === 'dark' ? '#10B981' : C.navy,
+                    color: selectedTheme === 'dark' ? '#0F1412' : '#fff',
+                    fontSize: 14.5,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
+                  }}
+                >
+                  <Sparkles size={17} />
+                  <span>Finish Setup & Enter Vault</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Restart Setup Option (always visible at bottom center) */}
+        <div style={{ textAlign: 'center', marginTop: 18 }}>
+          <button
+            type="button"
+            onClick={handleRestartSetup}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: selectedTheme === 'dark' ? '#9CA3AF' : C.muted,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 12px',
+              borderRadius: 8,
+              transition: 'all .15s ease',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = selectedTheme === 'dark' ? '#10B981' : C.heading; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = selectedTheme === 'dark' ? '#9CA3AF' : C.muted; }}
+          >
+            <RotateCcw size={13} />
+            <span>Restart setup from beginning</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 /* ------------------------------------------------------------------ */
 /* Entry Sheet                                                        */
@@ -678,7 +1758,7 @@ function PasswordGate({ open, onClose, onConfirm, userEmail }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Avatar Crop & Adjust Modal (Zoom 0.3x-3x, Pan, Rotate, Fit Full)   */
+/* Avatar Crop & Adjust Modal (Zoom, Pan, Rotate, Presets)           */
 /* ------------------------------------------------------------------ */
 
 function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
@@ -688,46 +1768,20 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
   const [panY, setPanY] = useState(0);
   const [rotation, setRotation] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
-  const [imgDims, setImgDims] = useState({ width: 200, height: 200, aspect: 1 });
   const dragStartRef = useRef({ x: 0, y: 0 });
   const panStartRef = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
-    if (open && imageSrc) {
-      const img = new window.Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => {
-        const aspect = (img.naturalWidth || img.width || 1) / (img.naturalHeight || img.height || 1);
-        setImgDims({
-          width: img.naturalWidth || img.width,
-          height: img.naturalHeight || img.height,
-          aspect,
-        });
-        // Default to a comfortable fit without cutting off portrait/tall images
-        setZoom(1);
-        setPanX(0);
-        setPanY(0);
-        setRotation(0);
-        setIsDragging(false);
-      };
-      img.src = imageSrc;
+    if (open) {
+      setZoom(1);
+      setPanX(0);
+      setPanY(0);
+      setRotation(0);
+      setIsDragging(false);
     }
   }, [open, imageSrc]);
 
   if (!open || !imageSrc) return null;
-
-  // Base preview size is 200px. Calculate base width/height to fit container
-  const previewSize = 200;
-  let baseW, baseH;
-  if (imgDims.aspect >= 1) {
-    // Landscape / square
-    baseW = previewSize;
-    baseH = previewSize / imgDims.aspect;
-  } else {
-    // Portrait / vertical phone photo (full height fits in circle so it's not overly zoomed)
-    baseH = previewSize;
-    baseW = previewSize * imgDims.aspect;
-  }
 
   const handlePointerDown = (e) => {
     setIsDragging(true);
@@ -753,7 +1807,7 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
 
   const handleApply = () => {
     const canvas = document.createElement('canvas');
-    const size = 400; // crisp standard resolution
+    const size = 400;
     canvas.width = size;
     canvas.height = size;
     const ctx = canvas.getContext('2d');
@@ -763,15 +1817,9 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
     img.crossOrigin = 'anonymous';
     img.onload = () => {
       ctx.clearRect(0, 0, size, size);
-
-      // Background fill for soft borders if zoomed out
-      ctx.fillStyle = '#1c222c';
-      ctx.beginPath();
-      ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
-      ctx.fill();
-
       ctx.save();
-      // Circular clip path for crisp avatar
+
+      // Circular clip path for crisp result
       ctx.beginPath();
       ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
       ctx.clip();
@@ -780,43 +1828,49 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
       ctx.translate(size / 2, size / 2);
       ctx.rotate((rotation * Math.PI) / 180);
 
-      // Exact 2x multiplier from 200px preview to 400px canvas
-      const scaleMultiplier = size / previewSize;
-      const drawW = baseW * scaleMultiplier * zoom;
-      const drawH = baseH * scaleMultiplier * zoom;
-      const finalPanX = panX * scaleMultiplier;
-      const finalPanY = panY * scaleMultiplier;
+      // Aspect ratio math
+      const imgAspect = img.width / img.height;
+      let drawW, drawH;
+      if (imgAspect > 1) {
+        drawH = size * zoom;
+        drawW = drawH * imgAspect;
+      } else {
+        drawW = size * zoom;
+        drawH = drawW / imgAspect;
+      }
+
+      const previewSize = 200;
+      const ratio = size / previewSize;
+      const finalPanX = panX * ratio;
+      const finalPanY = panY * ratio;
 
       ctx.drawImage(img, -drawW / 2 + finalPanX, -drawH / 2 + finalPanY, drawW, drawH);
       ctx.restore();
 
-      const result = canvas.toDataURL('image/jpeg', 0.90);
+      const result = canvas.toDataURL('image/jpeg', 0.92);
       onSave(result);
       onClose();
     };
     img.src = imageSrc;
   };
 
-  // Quick preset calculations
-  const coverZoom = imgDims.aspect >= 1 ? imgDims.aspect : (1 / imgDims.aspect);
-
   return (
     <div
-      style={{ position: 'fixed', inset: 0, zIndex: 70, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(20,17,13,0.7)', backdropFilter: 'blur(5px)', padding: 16 }}
+      style={{ position: 'fixed', inset: 0, zIndex: 70, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(20,17,13,0.65)', backdropFilter: 'blur(4px)', padding: 16 }}
       onClick={onClose}
     >
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
           background: C.surface, width: '100%', maxWidth: 420, borderRadius: 22,
-          padding: '20px 22px', boxShadow: '0 20px 48px rgba(0,0,0,0.35)', fontFamily: SANS,
-          display: 'flex', flexDirection: 'column', gap: 14, border: `1px solid ${C.line}`,
+          padding: '20px 22px', boxShadow: '0 20px 48px rgba(0,0,0,0.3)', fontFamily: SANS,
+          display: 'flex', flexDirection: 'column', gap: 16, border: `1px solid ${C.line}`,
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: C.heading, fontFamily: SERIF }}>Adjust Profile Photo</h3>
-            <p style={{ margin: '2px 0 0', fontSize: 11.5, color: C.muted }}>Zoom in/out or drag to fit full portrait/photo</p>
+            <p style={{ margin: '2px 0 0', fontSize: 11.5, color: C.muted }}>Drag photo to pan, use slider to zoom</p>
           </div>
           <button onClick={onClose} style={{ background: C.ice, border: 'none', borderRadius: '50%', width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
             <X size={15} color={C.heading} />
@@ -834,9 +1888,9 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
             onTouchMove={handlePointerMove}
             onTouchEnd={handlePointerUp}
             style={{
-              width: previewSize, height: previewSize, borderRadius: '50%', overflow: 'hidden',
+              width: 200, height: 200, borderRadius: '50%', overflow: 'hidden',
               position: 'relative', border: `3px solid ${C.navy}`,
-              boxShadow: '0 8px 24px rgba(0,0,0,0.25)', background: '#1c222c',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.22)', background: '#111',
               cursor: isDragging ? 'grabbing' : 'grab', userSelect: 'none', touchAction: 'none',
             }}
           >
@@ -846,47 +1900,45 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
               draggable={false}
               style={{
                 position: 'absolute', top: '50%', left: '50%',
-                width: `${baseW}px`, height: `${baseH}px`,
                 transform: `translate(calc(-50% + ${panX}px), calc(-50% + ${panY}px)) scale(${zoom}) rotate(${rotation}deg)`,
-                userSelect: 'none', pointerEvents: 'none',
-                maxWidth: 'none', maxHeight: 'none',
+                maxWidth: 'none', maxHeight: 'none', minWidth: '100%', minHeight: '100%',
+                objectFit: 'cover', userSelect: 'none', pointerEvents: 'none',
               }}
             />
             {/* Guide circle ring */}
             <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', border: '1.5px dashed rgba(255,255,255,0.45)', pointerEvents: 'none' }} />
           </div>
           <span style={{ fontSize: 11, color: C.steel, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}>
-            <Move size={12} /> Drag photo to pan & align
+            <Move size={12} /> Drag inside circle to adjust position
           </span>
         </div>
 
-        {/* Zoom Slider (Expanded from 0.3x to 3.0x) */}
+        {/* Zoom Slider */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: C.ice, padding: '12px 14px', borderRadius: 14, border: `1px solid ${C.line}` }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700, color: C.heading }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><ZoomIn size={13} color={C.navy} /> Scale / Zoom</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><ZoomIn size={13} color={C.navy} /> Zoom Scale</span>
             <span style={{ color: C.navy, fontWeight: 800 }}>{Math.round(zoom * 100)}%</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <button
               type="button"
-              onClick={() => setZoom((z) => Math.max(0.3, +(z - 0.1).toFixed(2)))}
+              onClick={() => setZoom((z) => Math.max(1, +(z - 0.15).toFixed(2)))}
               style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${C.line}`, background: C.surface, color: C.navy, fontWeight: 800, cursor: 'pointer' }}
             >
               -
             </button>
             <input
               type="range"
-              min="0.3"
+              min="1"
               max="3"
-              step="0.02"
+              step="0.05"
               value={zoom}
               onChange={(e) => setZoom(parseFloat(e.target.value))}
               style={{ flex: 1, accentColor: C.navy, cursor: 'pointer' }}
-            >
-            </input>
+            />
             <button
               type="button"
-              onClick={() => setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2)))}
+              onClick={() => setZoom((z) => Math.min(3, +(z + 0.15).toFixed(2)))}
               style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${C.line}`, background: C.surface, color: C.navy, fontWeight: 800, cursor: 'pointer' }}
             >
               +
@@ -894,28 +1946,21 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
           </div>
         </div>
 
-        {/* Alignment & Dimension Presets */}
+        {/* Alignment Presets & Rotate */}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
           <button
             type="button"
-            onClick={() => { setPanX(0); setPanY(0); setZoom(1); }}
-            style={{ padding: '7px 11px', borderRadius: 8, border: `1.5px solid ${zoom === 1 ? C.navy : C.line}`, background: zoom === 1 ? `${C.navy}10` : C.ice, fontSize: 11.5, fontWeight: 700, color: C.navySoft, cursor: 'pointer' }}
-          >
-            🖼️ Fit Full Photo
-          </button>
-          <button
-            type="button"
-            onClick={() => { setPanX(0); setPanY(0); setZoom(+(coverZoom).toFixed(2)); }}
-            style={{ padding: '7px 11px', borderRadius: 8, border: `1.5px solid ${Math.abs(zoom - coverZoom) < 0.05 ? C.navy : C.line}`, background: Math.abs(zoom - coverZoom) < 0.05 ? `${C.navy}10` : C.ice, fontSize: 11.5, fontWeight: 700, color: C.navySoft, cursor: 'pointer' }}
-          >
-            🔍 Fill Circle
-          </button>
-          <button
-            type="button"
-            onClick={() => { setPanX(0); setPanY(25); setZoom(Math.max(1.1, +(coverZoom * 1.1).toFixed(2))); }}
+            onClick={() => { setPanX(0); setPanY(35); setZoom(1.3); }}
             style={{ padding: '7px 11px', borderRadius: 8, border: `1px solid ${C.line}`, background: C.ice, fontSize: 11.5, fontWeight: 700, color: C.navySoft, cursor: 'pointer' }}
           >
             👤 Focus Face
+          </button>
+          <button
+            type="button"
+            onClick={() => { setPanX(0); setPanY(0); setZoom(1); }}
+            style={{ padding: '7px 11px', borderRadius: 8, border: `1px solid ${C.line}`, background: C.ice, fontSize: 11.5, fontWeight: 700, color: C.navySoft, cursor: 'pointer' }}
+          >
+            🎯 Center
           </button>
           <button
             type="button"
@@ -956,6 +2001,1397 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Excel / CSV Data Sheet Importer Helpers & Modal                    */
+/* ------------------------------------------------------------------ */
+
+function parseExcelDate(val) {
+  if (!val) return todayStr();
+  if (val instanceof Date && !isNaN(val)) {
+    return val.toISOString().slice(0, 10);
+  }
+  if (typeof val === 'number') {
+    // Excel date serial number (epoch is 1899-12-30)
+    const epoch = new Date(Date.UTC(1899, 11, 30));
+    const d = new Date(epoch.getTime() + val * 86400000);
+    if (!isNaN(d)) return d.toISOString().slice(0, 10);
+  }
+  const str = String(val).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+  const parts = str.split(/[/.-]/);
+  if (parts.length === 3) {
+    if (parts[0].length === 4) {
+      return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+    } else if (parts[2].length === 4) {
+      const p1 = parseInt(parts[0], 10);
+      const p2 = parseInt(parts[1], 10);
+      const y = parts[2];
+      if (p1 > 12) {
+        return `${y}-${String(p2).padStart(2, '0')}-${String(p1).padStart(2, '0')}`;
+      } else {
+        const testD = new Date(str);
+        if (!isNaN(testD)) return testD.toISOString().slice(0, 10);
+        return `${y}-${String(p2).padStart(2, '0')}-${String(p1).padStart(2, '0')}`;
+      }
+    }
+  }
+  const parsed = new Date(str);
+  if (!isNaN(parsed)) return parsed.toISOString().slice(0, 10);
+  return todayStr();
+}
+
+function parseExcelType(raw) {
+  const s = String(raw || '').toLowerCase().trim();
+  if (s.includes('inc') || s.includes('salary') || s.includes('revenue') || s.includes('receivable') || s.includes('gain') || s.includes('inflow')) return 'income';
+  if (s.includes('sav') || s.includes('deposit') || s.includes('holding in')) return 'saving';
+  if (s.includes('inv') || s.includes('crypto') || s.includes('stock') || s.includes('fund') || s.includes('trade')) return 'investment';
+  if (s.includes('untrack') || s.includes('unaccount') || s.includes('miss') || s.includes('leak') || s.includes('lost') || s.includes('unknown')) return 'unaccounted';
+  return 'expense';
+}
+
+function parseExcelCurrency(raw, fallback = 'PKR') {
+  const s = String(raw || '').toUpperCase().trim();
+  for (const c of CURRENCIES) {
+    if (s.includes(c)) return c;
+  }
+  if (s.includes('TL') || s.includes('LIRA')) return 'TRY';
+  if (s.includes('RS') || s.includes('RUPEE') || s.includes('₨')) return 'PKR';
+  if (s.includes('DOLLAR') || s.includes('$')) return 'USD';
+  if (s.includes('EURO') || s.includes('€')) return 'EUR';
+  if (s.includes('POUND') || s.includes('£')) return 'GBP';
+  if (s.includes('TETHER') || s.includes('USDT') || s.includes('₮')) return 'USDT';
+  return fallback;
+}
+
+function parseExcelAmount(raw) {
+  if (raw === null || raw === undefined || raw === '') return 0;
+  if (typeof raw === 'number') return Math.abs(raw);
+  const clean = String(raw).replace(/[^0-9.-]/g, '');
+  const num = parseFloat(clean);
+  return isNaN(num) ? 0 : Math.abs(num);
+}
+
+function parseWorkbookFile(dataBuffer, fallbackCurrency = 'PKR') {
+  const workbook = XLSX.read(dataBuffer, { type: 'array', cellDates: true });
+  const sheetNames = workbook.SheetNames || [];
+  if (sheetNames.length === 0) throw new Error('No sheets found in the uploaded workbook.');
+
+  let entryRows = [];
+  let reminderRows = [];
+
+  const entriesSheetName = sheetNames.find((n) => /all entries|entries|transactions|statement|sheet1|history/i.test(n)) || sheetNames[0];
+  const remindersSheetName = sheetNames.find((n) => /reminder|bill|sheet2|sheet 2/i.test(n));
+
+  if (entriesSheetName && workbook.Sheets[entriesSheetName]) {
+    entryRows = XLSX.utils.sheet_to_json(workbook.Sheets[entriesSheetName], { defval: '' });
+  }
+
+  if (remindersSheetName && remindersSheetName !== entriesSheetName && workbook.Sheets[remindersSheetName]) {
+    reminderRows = XLSX.utils.sheet_to_json(workbook.Sheets[remindersSheetName], { defval: '' });
+  }
+
+  const parsedEntries = [];
+  for (const r of entryRows) {
+    const amountVal = parseExcelAmount(r.Amount || r.amount || r['Due Amount'] || r.Total || r.Value || r['Transaction Amount']);
+    if (amountVal <= 0) continue;
+
+    const dateVal = parseExcelDate(r.Date || r.date || r['Transaction Date'] || r.Timestamp || r.Time);
+    const typeVal = parseExcelType(r.Type || r.type || r.Category || r.category || r.Description);
+    const currencyVal = parseExcelCurrency(r.Currency || r.currency || r.Symbol || r.Unit, fallbackCurrency);
+    const categoryVal = String(r.Category || r.category || r['Category Name'] || (typeVal === 'expense' ? 'Other' : '')).trim();
+    const holdingSourceVal = String(r['Holding Source'] || r.holdingSource || r.Source || r.Account || r.Wallet || '').trim();
+    const noteVal = String(r.Note || r.note || r.Description || r.Memo || r.Details || '').trim();
+
+    parsedEntries.push({
+      id: uid(),
+      type: typeVal,
+      amount: amountVal,
+      currency: currencyVal,
+      category: categoryVal,
+      holdingSource: typeVal === 'expense' ? '' : holdingSourceVal,
+      note: noteVal,
+      date: dateVal,
+      rateAtEntry: null,
+    });
+  }
+
+  const parsedReminders = [];
+  for (const r of reminderRows) {
+    const titleVal = String(r.Title || r.title || r.Reminder || r['Bill Name'] || r.Name || '').trim();
+    if (!titleVal) continue;
+    const amountVal = parseExcelAmount(r['Due Amount'] || r.Amount || r.amount || r.DueAmount);
+    const dateVal = parseExcelDate(r['Due Date'] || r.dueDate || r.DueDate || r.Date);
+    const currencyVal = parseExcelCurrency(r.Currency || r.currency, fallbackCurrency);
+    const freqRaw = String(r.Frequency || r.frequency || 'once').toLowerCase();
+    const frequencyVal = ['weekly', 'monthly', 'yearly'].find((f) => freqRaw.includes(f)) || 'once';
+    const statusRaw = String(r.Status || r.status || '').toLowerCase();
+    const completedVal = statusRaw.includes('comp') || statusRaw === 'paid' || r.completed === true;
+    const noteVal = String(r.Note || r.note || '').trim();
+
+    parsedReminders.push({
+      id: uid(),
+      title: titleVal,
+      type: freqRaw.includes('inc') ? 'income' : freqRaw.includes('sav') ? 'saving' : 'expense',
+      dueDate: dateVal,
+      amount: amountVal,
+      currency: currencyVal,
+      frequency: frequencyVal,
+      completed: completedVal,
+      note: noteVal,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  return { entries: parsedEntries, reminders: parsedReminders, sheetNames };
+}
+
+function ImportSheetModal({
+  open,
+  onClose,
+  userEmail,
+  onImport,
+  defaultCurrency = 'PKR',
+}) {
+  const C = useColors();
+  const [step, setStep] = useState('auth'); // 'auth' | 'upload' | 'preview' | 'importing' | 'success'
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+
+  const [isDragging, setIsDragging] = useState(false);
+  const [parseLoading, setParseLoading] = useState(false);
+  const [parseError, setParseError] = useState('');
+  const [parsedData, setParsedData] = useState(null);
+  const [fileName, setFileName] = useState('');
+  const [fileSize, setFileSize] = useState('');
+  const [importMode, setImportMode] = useState('merge'); // 'merge' | 'replace'
+  const [importSummary, setImportSummary] = useState(null);
+
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    if (open) {
+      setStep('auth');
+      setPassword('');
+      setShowPassword(false);
+      setAuthError('');
+      setAuthLoading(false);
+      setParseLoading(false);
+      setParseError('');
+      setParsedData(null);
+      setFileName('');
+      setFileSize('');
+      setImportMode('merge');
+      setImportSummary(null);
+    }
+  }, [open]);
+
+  if (!open) return null;
+
+  const handlePasswordSubmit = async (e) => {
+    e.preventDefault();
+    if (!password) {
+      setAuthError('Please enter your account password.');
+      return;
+    }
+    setAuthLoading(true);
+    setAuthError('');
+    try {
+      const { error: err } = await supabase.auth.signInWithPassword({
+        email: userEmail,
+        password,
+      });
+      setAuthLoading(false);
+      if (err) {
+        setAuthError('Incorrect password. Verification failed.');
+        return;
+      }
+      setStep('upload');
+    } catch (err) {
+      setAuthLoading(false);
+      setAuthError(err?.message || 'Verification error occurred.');
+    }
+  };
+
+  const handleFileProcess = (file) => {
+    if (!file) return;
+    setParseError('');
+    setParseLoading(true);
+    setFileName(file.name);
+    setFileSize(`${(file.size / 1024).toFixed(1)} KB`);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const buffer = e.target.result;
+        const result = parseWorkbookFile(buffer, defaultCurrency);
+        if (result.entries.length === 0 && result.reminders.length === 0) {
+          setParseError('No transaction rows or reminders found in this file. Please verify file format.');
+          setParseLoading(false);
+          return;
+        }
+        setParsedData(result);
+        setParseLoading(false);
+        setStep('preview');
+      } catch (err) {
+        console.error('File parsing error:', err);
+        setParseError(`Failed to parse file: ${err.message || 'Unknown format'}`);
+        setParseLoading(false);
+      }
+    };
+    reader.onerror = () => {
+      setParseError('Error reading selected file.');
+      setParseLoading(false);
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleFileProcess(file);
+  };
+
+  const handleExecuteImport = async () => {
+    if (!parsedData) return;
+    setStep('importing');
+    try {
+      const res = await onImport({
+        importedEntries: parsedData.entries,
+        importedReminders: parsedData.reminders,
+        mode: importMode,
+      });
+      setImportSummary({
+        entriesCount: res?.count ?? parsedData.entries.length,
+        remindersCount: res?.reminderCount ?? parsedData.reminders.length,
+        mode: importMode,
+      });
+      setStep('success');
+    } catch (err) {
+      console.error(err);
+      setParseError(`Import failed: ${err.message || 'Database error'}`);
+      setStep('preview');
+    }
+  };
+
+  // Currency breakdown for preview
+  const currencyCounts = parsedData?.entries?.reduce((acc, e) => {
+    acc[e.currency] = (acc[e.currency] || 0) + 1;
+    return acc;
+  }, {}) || {};
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 80,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(10,10,10,0.72)', backdropFilter: 'blur(6px)', padding: 16,
+      }}
+      onClick={step === 'importing' ? undefined : onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: C.surface, borderRadius: 22, padding: '24px 22px',
+          width: '100%', maxWidth: 450, fontFamily: SANS,
+          boxShadow: '0 20px 50px rgba(0,0,0,0.4)',
+          border: `1.5px solid ${C.line}`,
+          maxHeight: '90vh', overflowY: 'auto',
+          transition: 'all .2s ease',
+        }}
+      >
+        {/* ============================================================ */}
+        {/* STEP 1: PASSWORD AUTHENTICATION                              */}
+        {/* ============================================================ */}
+        {step === 'auth' && (
+          <div>
+            <div style={{
+              width: 50, height: 50, borderRadius: '50%', background: `${C.navy}12`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px',
+              border: `1.5px solid ${C.navy}24`,
+            }}>
+              <KeyRound size={24} color={C.navy} />
+            </div>
+
+            <h3 style={{
+              fontFamily: SERIF, fontSize: 19, fontWeight: 800, color: C.heading,
+              textAlign: 'center', margin: '0 0 6px',
+            }}>
+              Password Authorization Required
+            </h3>
+
+            <p style={{
+              fontSize: 12.5, color: C.muted, textAlign: 'center', margin: '0 0 16px', lineHeight: 1.45,
+            }}>
+              To securely import transactions and update your Vaultify database, please confirm your account password.
+            </p>
+
+            <form onSubmit={handlePasswordSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  autoFocus
+                  required
+                  placeholder="Enter account password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  style={{
+                    width: '100%', border: `1.5px solid ${C.line}`, borderRadius: 12,
+                    padding: '12px 42px 12px 14px', fontSize: 14, background: C.ice,
+                    color: C.heading, boxSizing: 'border-box', outline: 'none',
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  style={{
+                    position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
+                    background: 'none', border: 'none', color: C.muted, cursor: 'pointer', display: 'flex',
+                  }}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+
+              {authError && (
+                <div style={{ fontSize: 12, color: '#B23A34', fontWeight: 600, textAlign: 'center' }}>
+                  {authError}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  disabled={authLoading}
+                  style={{
+                    flex: 1, padding: '12px', borderRadius: 12, border: `1px solid ${C.line}`,
+                    background: C.surface, color: C.heading, fontWeight: 700, fontSize: 13, cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={authLoading}
+                  style={{
+                    flex: 1.3, padding: '12px', borderRadius: 12, border: 'none',
+                    background: C.navy, color: '#fff', fontWeight: 700, fontSize: 13,
+                    cursor: 'pointer', opacity: authLoading ? 0.7 : 1, display: 'flex',
+                    alignItems: 'center', justifyContent: 'center', gap: 7,
+                    boxShadow: '0 4px 14px rgba(20,17,13,0.18)',
+                  }}
+                >
+                  {authLoading ? (
+                    <>
+                      <RefreshCw size={14} style={{ animation: 'vlfSpin 1s linear infinite' }} />
+                      <span>Verifying…</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check size={15} strokeWidth={2.8} />
+                      <span>Authorize & Continue</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* ============================================================ */}
+        {/* STEP 2: FILE UPLOAD & DROPZONE                               */}
+        {/* ============================================================ */}
+        {step === 'upload' && (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{
+                  width: 34, height: 34, borderRadius: 10, background: `${C.navy}12`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <Upload size={18} color={C.navy} />
+                </div>
+                <h3 style={{ fontFamily: SERIF, fontSize: 18, fontWeight: 800, color: C.heading, margin: 0 }}>
+                  Upload Data Sheet
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                style={{ background: 'none', border: 'none', color: C.muted, cursor: 'pointer', padding: 4 }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p style={{ fontSize: 12.5, color: C.muted, margin: '0 0 16px', lineHeight: 1.45 }}>
+              Upload your downloaded Vaultify Excel backup or custom spreadsheet (<code style={{ fontFamily: MONO, fontSize: 11, background: C.ice, padding: '2px 5px', borderRadius: 4 }}>.xlsx</code>, <code style={{ fontFamily: MONO, fontSize: 11, background: C.ice, padding: '2px 5px', borderRadius: 4 }}>.xls</code>, <code style={{ fontFamily: MONO, fontSize: 11, background: C.ice, padding: '2px 5px', borderRadius: 4 }}>.csv</code>).
+            </p>
+
+            {/* Drag and drop box */}
+            <div
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              style={{
+                border: `2px dashed ${isDragging ? C.navy : `${C.line}`}`,
+                background: isDragging ? `${C.navy}08` : C.ice,
+                borderRadius: 16,
+                padding: '30px 16px',
+                textAlign: 'center',
+                cursor: 'pointer',
+                transition: 'all .2s ease',
+                marginBottom: 16,
+              }}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleFileProcess(file);
+                }}
+              />
+              <div style={{
+                width: 48, height: 48, borderRadius: '50%', background: C.surface,
+                boxShadow: '0 3px 12px rgba(20,17,13,0.08)', display: 'flex',
+                alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px',
+              }}>
+                <FileSpreadsheet size={24} color={C.steel} />
+              </div>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: C.heading, marginBottom: 4 }}>
+                Click to browse or drag & drop sheet here
+              </div>
+              <div style={{ fontSize: 11.5, color: C.muted }}>
+                Supports Excel (.xlsx, .xls) and CSV files
+              </div>
+            </div>
+
+            {parseLoading && (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 0', color: C.navy, fontSize: 13, fontWeight: 700 }}>
+                <RefreshCw size={16} style={{ animation: 'vlfSpin 1s linear infinite' }} />
+                <span>Analyzing and parsing sheet columns…</span>
+              </div>
+            )}
+
+            {parseError && (
+              <div style={{
+                background: '#B23A3412', border: '1px solid #B23A3433', borderRadius: 10,
+                padding: '10px 12px', fontSize: 12, color: '#B23A34', fontWeight: 600, marginBottom: 14,
+              }}>
+                {parseError}
+              </div>
+            )}
+
+            {/* Capabilities Info Box */}
+            <div style={{
+              background: C.surface, border: `1px solid ${C.line}`, borderRadius: 12,
+              padding: '12px 14px', fontSize: 11.5, color: C.navySoft, lineHeight: 1.5,
+            }}>
+              <div style={{ fontWeight: 800, color: C.heading, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>💡</span>
+                <span>Automatic Column Mapping:</span>
+              </div>
+              <div>
+                Vaultify automatically recognizes <code style={{ fontFamily: MONO, fontSize: 10.5 }}>Date</code>, <code style={{ fontFamily: MONO, fontSize: 10.5 }}>Type</code>, <code style={{ fontFamily: MONO, fontSize: 10.5 }}>Amount</code>, <code style={{ fontFamily: MONO, fontSize: 10.5 }}>Currency</code>, <code style={{ fontFamily: MONO, fontSize: 10.5 }}>Category</code>, and <code style={{ fontFamily: MONO, fontSize: 10.5 }}>Reminders (Sheet 2)</code>.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================ */}
+        {/* STEP 3: DATA PREVIEW & MODE SELECTION                        */}
+        {/* ============================================================ */}
+        {step === 'preview' && parsedData && (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{
+                  width: 32, height: 32, borderRadius: 8, background: '#1E9E6418',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <CheckCircle2 size={18} color="#1E9E64" />
+                </div>
+                <h3 style={{ fontFamily: SERIF, fontSize: 17.5, fontWeight: 800, color: C.heading, margin: 0 }}>
+                  Ready to Import
+                </h3>
+              </div>
+              <span style={{ fontSize: 11, fontFamily: MONO, color: C.muted, background: C.ice, padding: '3px 8px', borderRadius: 6 }}>
+                {fileName} ({fileSize})
+              </span>
+            </div>
+
+            {/* Statistics pill cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginBottom: 14 }}>
+              <div style={{ background: C.ice, border: `1px solid ${C.line}`, borderRadius: 12, padding: '10px 12px' }}>
+                <div style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>Transactions Found</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: C.heading, fontFamily: MONO, marginTop: 2 }}>
+                  {parsedData.entries.length}
+                </div>
+              </div>
+              <div style={{ background: C.ice, border: `1px solid ${C.line}`, borderRadius: 12, padding: '10px 12px' }}>
+                <div style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>Reminders Found</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: C.heading, fontFamily: MONO, marginTop: 2 }}>
+                  {parsedData.reminders.length}
+                </div>
+              </div>
+            </div>
+
+            {/* Currency Breakdown Chips */}
+            {Object.keys(currencyCounts).length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6 }}>
+                  CURRENCIES DETECTED
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {Object.entries(currencyCounts).map(([cur, count]) => (
+                    <span
+                      key={cur}
+                      style={{
+                        background: `${C.navy}0D`, border: `1px solid ${C.navy}24`,
+                        borderRadius: 8, padding: '3px 8px', fontSize: 11.5,
+                        fontWeight: 700, color: C.navy,
+                      }}
+                    >
+                      {cur}: {count}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Mode selection radio */}
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6 }}>
+                IMPORT STRATEGY
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div
+                  onClick={() => setImportMode('merge')}
+                  style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 10,
+                    background: importMode === 'merge' ? `${C.navy}0D` : C.surface,
+                    border: `1.5px solid ${importMode === 'merge' ? C.navy : C.line}`,
+                    borderRadius: 12, padding: '10px 12px', cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="radio"
+                    checked={importMode === 'merge'}
+                    onChange={() => setImportMode('merge')}
+                    style={{ marginTop: 2, accentColor: C.navy }}
+                  />
+                  <div>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, color: C.heading }}>
+                      Merge & Append (Recommended)
+                    </div>
+                    <div style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>
+                      Adds new entries and keeps existing transactions. Skips exact duplicate records.
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  onClick={() => setImportMode('replace')}
+                  style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 10,
+                    background: importMode === 'replace' ? '#B23A340F' : C.surface,
+                    border: `1.5px solid ${importMode === 'replace' ? '#B23A34' : C.line}`,
+                    borderRadius: 12, padding: '10px 12px', cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="radio"
+                    checked={importMode === 'replace'}
+                    onChange={() => setImportMode('replace')}
+                    style={{ marginTop: 2, accentColor: '#B23A34' }}
+                  />
+                  <div>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, color: importMode === 'replace' ? '#B23A34' : C.heading }}>
+                      Replace & Overwrite Workspace
+                    </div>
+                    <div style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>
+                      Wipes current workspace entries and replaces them with this uploaded sheet.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick preview list of first 3 rows */}
+            {parsedData.entries.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6 }}>
+                  SAMPLE PREVIEW (FIRST {Math.min(3, parsedData.entries.length)} ROWS)
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {parsedData.entries.slice(0, 3).map((e, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '7px 10px', background: C.ice, borderRadius: 8, fontSize: 11.5,
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{
+                          fontSize: 9.5, fontWeight: 800, textTransform: 'uppercase',
+                          padding: '1px 5px', borderRadius: 4, background: C.surface, color: C.navy,
+                        }}>
+                          {e.type}
+                        </span>
+                        <span style={{ color: C.muted }}>{e.date}</span>
+                        <span style={{ fontWeight: 600, color: C.heading }}>{e.category || e.note || 'Entry'}</span>
+                      </div>
+                      <div style={{ fontFamily: MONO, fontWeight: 700, color: C.heading }}>
+                        {fmtMoney(e.amount, e.currency)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                type="button"
+                onClick={() => setStep('upload')}
+                style={{
+                  flex: 1, padding: '12px', borderRadius: 12, border: `1px solid ${C.line}`,
+                  background: C.surface, color: C.heading, fontWeight: 700, fontSize: 13, cursor: 'pointer',
+                }}
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteImport}
+                style={{
+                  flex: 1.5, padding: '12px', borderRadius: 12, border: 'none',
+                  background: importMode === 'replace' ? '#B23A34' : C.navy, color: '#fff',
+                  fontWeight: 700, fontSize: 13, cursor: 'pointer', display: 'flex',
+                  alignItems: 'center', justifyContent: 'center', gap: 7,
+                  boxShadow: '0 4px 14px rgba(20,17,13,0.18)',
+                }}
+              >
+                <Upload size={15} />
+                <span>Confirm & Import Data</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================ */}
+        {/* STEP 4: IMPORTING SPINNER                                    */}
+        {/* ============================================================ */}
+        {step === 'importing' && (
+          <div style={{ textAlign: 'center', padding: '24px 8px' }}>
+            <div style={{
+              width: 56, height: 56, borderRadius: '50%', background: `${C.navy}12`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px',
+            }}>
+              <RefreshCw size={28} color={C.navy} style={{ animation: 'vlfSpin 1s linear infinite' }} />
+            </div>
+            <h3 style={{ fontFamily: SERIF, fontSize: 18, fontWeight: 800, color: C.heading, margin: '0 0 6px' }}>
+              Importing to Vaultify…
+            </h3>
+            <p style={{ fontSize: 12.5, color: C.muted, margin: 0 }}>
+              Syncing transactions and reminders into your secure workspace database.
+            </p>
+          </div>
+        )}
+
+        {/* ============================================================ */}
+        {/* STEP 5: SUCCESS CONFIRMATION                                 */}
+        {/* ============================================================ */}
+        {step === 'success' && (
+          <div style={{ textAlign: 'center', padding: '8px 4px 4px' }}>
+            <div style={{
+              width: 60, height: 60, borderRadius: '50%', background: '#1E9E6418',
+              border: '2px solid #1E9E6444',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px',
+              animation: 'vlfPop .45s cubic-bezier(.34,1.56,.64,1)',
+            }}>
+              <CheckCircle2 size={34} color="#1E9E64" strokeWidth={2.5} />
+            </div>
+
+            <h3 style={{
+              fontFamily: SERIF, fontSize: 19, fontWeight: 800, color: '#1E9E64',
+              textAlign: 'center', margin: '0 0 6px',
+            }}>
+              Data Imported Successfully
+            </h3>
+
+            <p style={{
+              fontSize: 12.5, color: C.muted, textAlign: 'center', margin: '0 0 14px', lineHeight: 1.45,
+            }}>
+              <strong>{importSummary?.entriesCount || 0} transactions</strong>
+              {importSummary?.remindersCount > 0 && ` and ${importSummary.remindersCount} reminders`} have been loaded and synchronized with your workspace.
+            </p>
+
+            {/* Disclaimer and status card */}
+            <div style={{
+              background: C.ice, border: `1px solid ${C.line}`, borderRadius: 12,
+              padding: '12px 14px', marginBottom: 16, textAlign: 'left', fontSize: 11.5,
+              color: C.navySoft, lineHeight: 1.5,
+            }}>
+              <div style={{ fontWeight: 800, color: C.heading, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>ℹ️</span>
+                <span>Database Sync & Availability:</span>
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 18 }}>
+                <li style={{ marginBottom: 3 }}>All calculations, monthly summaries, and Net Worth values have been updated instantly.</li>
+                <li>Your data is securely stored and available across all your sessions.</li>
+              </ul>
+            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                width: '100%', padding: '13px', borderRadius: 12, border: 'none',
+                background: C.navy, color: '#fff', fontWeight: 700, fontSize: 13.5,
+                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                gap: 7, boxShadow: '0 4px 14px rgba(20,17,13,0.2)',
+              }}
+            >
+              <span>Done & View Vault</span>
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Delete Account Modal (Requires Password 2 Times)                   */
+/* ------------------------------------------------------------------ */
+
+function DeleteAccountModal({ open, onClose, onConfirmDelete, userEmail }) {
+  const C = useColors();
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPw1, setShowPw1] = useState(false);
+  const [showPw2, setShowPw2] = useState(false);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [deletedSuccess, setDeletedSuccess] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setPassword('');
+      setConfirmPassword('');
+      setShowPw1(false);
+      setShowPw2(false);
+      setError('');
+      setLoading(false);
+      setDeletedSuccess(false);
+    }
+  }, [open]);
+
+  if (!open) return null;
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    if (!password || !confirmPassword) {
+      setError('Please enter your password in both fields.');
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError('Passwords do not match. Please re-enter carefully.');
+      return;
+    }
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { error: authErr } = await supabase.auth.signInWithPassword({
+        email: userEmail,
+        password,
+      });
+      if (authErr) {
+        setLoading(false);
+        setError('Incorrect password. Verification failed.');
+        return;
+      }
+
+      setDeletedSuccess(true);
+      setLoading(false);
+
+      // Perform deletion after showing the success screen
+      setTimeout(async () => {
+        try {
+          await onConfirmDelete();
+        } catch (err) {
+          console.error(err);
+        }
+      }, 1600);
+    } catch (err) {
+      setLoading(false);
+      setError(err?.message || 'Failed to delete account. Please try again.');
+    }
+  };
+
+  const handleManualProceed = async () => {
+    try {
+      await onConfirmDelete();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 85,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(10,10,10,0.75)', backdropFilter: 'blur(6px)', padding: 16,
+      }}
+      onClick={deletedSuccess ? handleManualProceed : onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: C.surface, borderRadius: 22, padding: '24px 22px',
+          width: '100%', maxWidth: 410, fontFamily: SANS,
+          boxShadow: '0 20px 50px rgba(0,0,0,0.4)',
+          border: deletedSuccess ? '1.5px solid #1E9E6466' : '1.5px solid #B23A3444',
+          transition: 'all .25s ease',
+        }}
+      >
+        {deletedSuccess ? (
+          /* Dedicated Account Deleted Successfully Screen */
+          <div style={{ textAlign: 'center', padding: '6px 4px 4px' }}>
+            <div style={{
+              width: 60, height: 60, borderRadius: '50%', background: '#1E9E6418',
+              border: '2px solid #1E9E6444',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px',
+              animation: 'vlfPop .45s cubic-bezier(.34,1.56,.64,1)',
+            }}>
+              <CheckCircle2 size={34} color="#1E9E64" strokeWidth={2.5} />
+            </div>
+
+            <h3 style={{
+              fontFamily: SERIF, fontSize: 19, fontWeight: 800, color: '#1E9E64',
+              textAlign: 'center', margin: '0 0 6px',
+            }}>
+              Your Account Has Been Deleted Successfully
+            </h3>
+
+            <p style={{
+              fontSize: 12.5, color: C.muted, textAlign: 'center', margin: '0 0 12px', lineHeight: 1.45,
+            }}>
+              All your transaction records, active currencies, workspaces, reminders, and user settings have been completely wiped.
+            </p>
+
+            {/* English Disclaimer & Next Steps Box */}
+            <div style={{
+              background: C.ice,
+              border: `1px solid ${C.line}`,
+              borderRadius: 12,
+              padding: '12px 14px',
+              marginBottom: 16,
+              textAlign: 'left',
+              fontSize: 11.5,
+              color: C.body,
+              lineHeight: 1.5,
+            }}>
+              <div style={{ fontWeight: 800, color: C.heading, marginBottom: 5, display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                <span>ℹ️</span>
+                <span>Important Disclaimer & Next Steps:</span>
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 18, color: C.body }}>
+                <li style={{ marginBottom: 4 }}>
+                  <strong>Zero Data Retention:</strong> All previous transactions, custom assets, and portfolio history are permanently erased and cannot be restored.
+                </li>
+                <li style={{ marginBottom: 4 }}>
+                  <strong>Create a New Account:</strong> Your email address is now released. You can use it anytime to register a clean, brand new account.
+                </li>
+                <li>
+                  <strong>Fresh Start:</strong> Signing up again will take you through a fresh onboarding setup with your preferred base currencies.
+                </li>
+              </ul>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleManualProceed}
+              style={{
+                width: '100%',
+                padding: '12px',
+                borderRadius: 12,
+                border: 'none',
+                background: C.navy,
+                color: '#fff',
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                boxShadow: '0 4px 14px rgba(20,17,13,0.2)',
+              }}
+            >
+              <span>Return to Sign In</span>
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        ) : (
+          <>
+            <div style={{
+              width: 52, height: 52, borderRadius: '50%', background: 'rgba(178,58,52,0.12)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px',
+            }}>
+              <AlertTriangle size={26} color="#B23A34" />
+            </div>
+
+            <h3 style={{
+              fontFamily: SERIF, fontSize: 19, fontWeight: 800, color: '#B23A34',
+              textAlign: 'center', margin: '0 0 6px',
+            }}>
+              Delete Account Permanently
+            </h3>
+
+            <p style={{
+              fontSize: 12.5, color: C.muted, textAlign: 'center', margin: '0 0 14px', lineHeight: 1.45,
+            }}>
+              This action <strong>cannot be undone</strong>. All your workspaces, transaction records, currencies, reminders, and settings will be permanently wiped.
+            </p>
+
+            <div style={{
+              background: '#B23A340F', border: '1px solid #B23A3433', borderRadius: 10,
+              padding: '10px 12px', marginBottom: 16, fontSize: 11.5, color: '#B23A34', fontWeight: 600,
+            }}>
+              🔒 For maximum security, enter your current account password <strong>twice</strong> to authorize permanent deletion.
+            </div>
+
+            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+              <div>
+                <label style={{ fontSize: 11.5, fontWeight: 700, color: C.heading, display: 'block', marginBottom: 4 }}>
+                  Enter Password
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type={showPw1 ? 'text' : 'password'}
+                    required
+                    placeholder="Enter account password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    style={{
+                      width: '100%', border: `1px solid ${C.line}`, borderRadius: 10,
+                      padding: '10px 38px 10px 12px', fontSize: 13.5, background: C.ice,
+                      color: C.heading, boxSizing: 'border-box', outline: 'none',
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPw1((v) => !v)}
+                    style={{
+                      position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+                      background: 'none', border: 'none', color: C.muted, cursor: 'pointer', display: 'flex',
+                    }}
+                  >
+                    {showPw1 ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: 11.5, fontWeight: 700, color: C.heading, display: 'block', marginBottom: 4 }}>
+                  Re-enter Password to Confirm
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type={showPw2 ? 'text' : 'password'}
+                    required
+                    placeholder="Re-enter password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    style={{
+                      width: '100%', border: `1px solid ${C.line}`, borderRadius: 10,
+                      padding: '10px 38px 10px 12px', fontSize: 13.5, background: C.ice,
+                      color: C.heading, boxSizing: 'border-box', outline: 'none',
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPw2((v) => !v)}
+                    style={{
+                      position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+                      background: 'none', border: 'none', color: C.muted, cursor: 'pointer', display: 'flex',
+                    }}
+                  >
+                    {showPw2 ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                </div>
+              </div>
+
+              {error && (
+                <div style={{ fontSize: 12, color: '#B23A34', fontWeight: 600, textAlign: 'center', marginTop: 2 }}>
+                  {error}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  disabled={loading}
+                  style={{
+                    flex: 1, padding: '12px', borderRadius: 12, border: `1px solid ${C.line}`,
+                    background: C.surface, color: C.heading, fontWeight: 700, fontSize: 13, cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  style={{
+                    flex: 1.2, padding: '12px', borderRadius: 12, border: 'none',
+                    background: '#B23A34', color: '#fff', fontWeight: 700, fontSize: 13,
+                    cursor: 'pointer', opacity: loading ? 0.7 : 1, display: 'flex',
+                    alignItems: 'center', justifyContent: 'center', gap: 6,
+                  }}
+                >
+                  {loading ? (
+                    <>
+                      <RefreshCw size={14} style={{ animation: 'vlfSpin 1s linear infinite' }} />
+                      <span>Deleting…</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 size={14} />
+                      <span>Delete Permanently</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Profile Sheet (Dedicated Profile & Avatar Tab)                     */
+/* ------------------------------------------------------------------ */
+
+function ProfileSheet({
+  open,
+  onClose,
+  profile,
+  userEmail,
+  onUpdateProfile,
+  onOpenSettings,
+}) {
+  const C = useColors();
+  const [name, setName] = useState(profile?.name || 'Personal Vault');
+  const [adjustingImageSrc, setAdjustingImageSrc] = useState(null);
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    if (open) {
+      setName(profile?.name || 'Personal Vault');
+    }
+  }, [open, profile]);
+
+  if (!open) return null;
+
+  const handleAvatarUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 8 * 1024 * 1024) {
+      alert('Please select an image smaller than 8MB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result;
+      if (base64) {
+        setAdjustingImageSrc(base64);
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const handleRemoveAvatar = () => {
+    if (onUpdateProfile) {
+      onUpdateProfile({ ...profile, avatar: null });
+    }
+  };
+
+  const handleSaveName = (e) => {
+    e.preventDefault();
+    const clean = name.trim();
+    if (!clean) return;
+    if (onUpdateProfile) {
+      onUpdateProfile({ ...profile, name: clean });
+    }
+  };
+
+  const initials = (name || 'Vault').charAt(0).toUpperCase();
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 50,
+        display: 'flex', alignItems: 'flex-end',
+        background: 'rgba(26,23,18,0.5)',
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: C.surface, width: '100%', maxWidth: 480, margin: '0 auto',
+          borderRadius: '24px 24px 0 0', maxHeight: '90vh', overflowY: 'auto',
+          padding: '18px 18px 32px', fontFamily: SANS,
+          boxShadow: '0 -10px 34px rgba(26,23,18,0.28)',
+        }}
+      >
+        <div style={{ width: 40, height: 4, background: C.line, borderRadius: 2, margin: '0 auto 16px' }} />
+
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <h2 style={{ fontFamily: SERIF, fontSize: 21, color: C.heading, margin: 0, fontWeight: 700 }}>
+              Profile
+            </h2>
+            <span style={{ fontSize: 11, fontWeight: 800, padding: '3px 8px', borderRadius: 6, background: `${C.navy}14`, color: C.navy }}>
+              {profile?.name || 'Vault'}
+            </span>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              background: C.ice, border: 'none', borderRadius: '50%',
+              width: 32, height: 32, display: 'flex', alignItems: 'center',
+              justifyContent: 'center', cursor: 'pointer',
+            }}
+          >
+            <X size={16} color={C.heading} />
+          </button>
+        </div>
+
+        {/* Profile Picture Card */}
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center',
+          padding: '20px 16px', background: C.ice, borderRadius: 18,
+          border: `1px solid ${C.line}`, marginBottom: 20,
+        }}>
+          <div style={{
+            position: 'relative', width: 96, height: 96, borderRadius: '50%',
+            overflow: 'hidden', background: `linear-gradient(135deg, ${C.navy}, ${C.navySoft})`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: '#fff', fontSize: 32, fontWeight: 800,
+            border: `3px solid ${C.silver}`, boxShadow: '0 8px 24px rgba(20,17,13,0.15)',
+            marginBottom: 14,
+          }}>
+            {profile?.avatar ? (
+              <img src={profile.avatar} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              <span>{initials}</span>
+            )}
+          </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleAvatarUpload}
+            style={{ display: 'none' }}
+          />
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px',
+                borderRadius: 12, border: 'none', background: C.navy, color: '#fff',
+                fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                boxShadow: '0 2px 8px rgba(20,17,13,0.12)',
+              }}
+            >
+              <Camera size={15} /> Upload Photo
+            </button>
+
+            {profile?.avatar && (
+              <button
+                type="button"
+                onClick={() => setAdjustingImageSrc(profile.avatar)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px',
+                  borderRadius: 12, border: `1px solid ${C.line}`, background: C.surface,
+                  color: C.navySoft, fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                }}
+              >
+                <Crop size={14} /> Adjust / Zoom
+              </button>
+            )}
+
+            {profile?.avatar && (
+              <button
+                type="button"
+                onClick={handleRemoveAvatar}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px',
+                  borderRadius: 12, border: '1px solid #B23A3433', background: C.surface,
+                  color: '#B23A34', fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                }}
+              >
+                <Trash2 size={14} /> Remove
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Profile Name */}
+        <SectionLabel>Profile / Vault Name</SectionLabel>
+        <form onSubmit={handleSaveName} style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
+          <input
+            type="text"
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. My Personal Vault"
+            style={{
+              flex: 1, border: `1px solid ${C.line}`, borderRadius: 12,
+              padding: '11px 14px', fontSize: 13.5, background: C.surface,
+              color: C.navySoft, outline: 'none',
+            }}
+          />
+          <button
+            type="submit"
+            style={{
+              padding: '11px 18px', borderRadius: 12, border: 'none',
+              background: C.navy, color: '#fff', fontSize: 13, fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            Update
+          </button>
+        </form>
+
+        {/* Account Email Info */}
+        <SectionLabel>Account Security & Email</SectionLabel>
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '12px 14px', borderRadius: 14, background: C.ice,
+          border: `1px solid ${C.line}`, marginBottom: 16,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Mail size={16} color={C.steel} />
+            <div>
+              <div style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>Registered Email</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.heading }}>{userEmail || 'Authenticated User'}</div>
+            </div>
+          </div>
+          <span style={{
+            fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 6,
+            background: 'rgba(30,158,100,0.12)', color: '#1E9E64',
+          }}>
+            Verified
+          </span>
+        </div>
+
+        {/* English Disclaimer & Profile Capabilities Guide */}
+        <div style={{
+          background: `${C.navy}08`,
+          border: `1px solid ${C.navy}20`,
+          borderRadius: 14,
+          padding: '13px 15px',
+          marginBottom: 20,
+          textAlign: 'left',
+          fontSize: 12,
+          color: C.body,
+          lineHeight: 1.5,
+        }}>
+          <div style={{ fontWeight: 800, color: C.navy, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5 }}>
+            <ShieldCheck size={16} color={C.navy} />
+            <span>Profile & Account Capabilities (Disclaimer)</span>
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18, color: C.body }}>
+            <li style={{ marginBottom: 4 }}>
+              <strong>Custom Avatar & Visuals:</strong> Upload any photo, adjust zoom scale, and drag to reposition your circle avatar across the dashboard.
+            </li>
+            <li style={{ marginBottom: 4 }}>
+              <strong>Vault Personalization:</strong> Rename your workspace to distinguish between personal, business, or travel vaults.
+            </li>
+            <li style={{ marginBottom: 4 }}>
+              <strong>Data Privacy & Protection:</strong> All your financial balances, transactions, and exchange records are isolated and encrypted per user ID.
+            </li>
+            <li>
+              <strong>Advanced Settings & Danger Zone:</strong> Use Vault Settings to manage enabled currencies, budget limits, theme, 3-day trash recovery, or permanent account deletion.
+            </li>
+          </ul>
+        </div>
+
+        {/* Link to Settings */}
+        {onOpenSettings && (
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onOpenSettings();
+            }}
+            className="vlf-hover"
+            style={{
+              width: '100%', padding: '13px', borderRadius: 14,
+              border: `1px solid ${C.line}`, background: C.surface,
+              color: C.navy, fontSize: 13.5, fontWeight: 700,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              gap: 8, cursor: 'pointer',
+            }}
+          >
+            <Settings size={16} />
+            <span>Open Vault Settings</span>
+          </button>
+        )}
+
+        {/* Avatar Crop / Adjust Modal */}
+        <AvatarAdjustModal
+          open={!!adjustingImageSrc}
+          imageSrc={adjustingImageSrc}
+          onClose={() => setAdjustingImageSrc(null)}
+          onSave={(adjustedBase64) => {
+            if (onUpdateProfile) {
+              onUpdateProfile({ ...profile, avatar: adjustedBase64 });
+            }
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Settings Sheet                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -973,6 +3409,7 @@ function SettingsSheet({
   entries,
   onClearMonth,
   onClearAll,
+  onOpenDeleteAccount,
   profile,
   profiles = [],
   onUpdateProfile,
@@ -985,8 +3422,6 @@ function SettingsSheet({
   onEmptyTrash,
   initialTab = 'workspace',
   onOpenImport,
-  requestPassword,
-  onRerunOnboarding,
 }) {
   const C = useColors();
   const [activeTab, setActiveTab] = useState(initialTab || 'workspace');
@@ -997,20 +3432,16 @@ function SettingsSheet({
   const [pwStatus, setPwStatus] = useState('');
   const [pwSaving, setPwSaving] = useState(false);
 
-  // Profile & Workspace state
-  const [profileName, setProfileName] = useState(profile?.name || 'Personal Vault');
+  // Workspace state
   const [enabledCurrencies, setEnabledCurrencies] = useState(profile?.enabledCurrencies || CURRENCIES);
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
   const [showAddWorkspace, setShowAddWorkspace] = useState(false);
-  const [adjustingImageSrc, setAdjustingImageSrc] = useState(null);
-  const fileInputRef = useRef(null);
 
   useEffect(() => {
     if (open) {
       setLimits({ ...settings.budgetLimits });
       setBudgetPeriod(settings.budgetPeriod || settings.budgetLimits?._period || 'week');
       setNewPw(''); setConfirmPw(''); setPwStatus('');
-      setProfileName(profile?.name || 'Personal Vault');
       setEnabledCurrencies(profile?.enabledCurrencies || CURRENCIES);
       setShowAddWorkspace(false);
       setNewWorkspaceName('');
@@ -1039,54 +3470,6 @@ function SettingsSheet({
 
   if (!open) return null;
 
-  const handleAvatarUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 10 * 1024 * 1024) {
-      alert(`File size is ${(file.size / (1024 * 1024)).toFixed(1)}MB. Please select an image smaller than 10MB.`);
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const base64 = event.target?.result;
-      if (base64) {
-        // Automatically resize large images before opening adjuster for smooth performance
-        const img = new window.Image();
-        img.onload = () => {
-          const maxDim = 1200;
-          if (img.width > maxDim || img.height > maxDim) {
-            const canvas = document.createElement('canvas');
-            let w = img.width;
-            let h = img.height;
-            if (w > h) {
-              h = (h / w) * maxDim;
-              w = maxDim;
-            } else {
-              w = (w / h) * maxDim;
-              h = maxDim;
-            }
-            canvas.width = w;
-            canvas.height = h;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(img, 0, 0, w, h);
-            setAdjustingImageSrc(canvas.toDataURL('image/jpeg', 0.92));
-          } else {
-            setAdjustingImageSrc(base64);
-          }
-        };
-        img.src = base64;
-      }
-    };
-    reader.readAsDataURL(file);
-    e.target.value = '';
-  };
-
-  const handleRemoveAvatar = () => {
-    if (onUpdateProfile) {
-      onUpdateProfile({ ...profile, avatar: null });
-    }
-  };
-
   const handleToggleCurrency = (c) => {
     let next;
     if (enabledCurrencies.includes(c)) {
@@ -1099,16 +3482,8 @@ function SettingsSheet({
       next = [...enabledCurrencies, c];
     }
     setEnabledCurrencies(next);
-    if (onUpdateProfile) {
+    if (profile && onUpdateProfile) {
       onUpdateProfile({ ...profile, enabledCurrencies: next });
-    }
-  };
-
-  const handleSaveProfileName = () => {
-    const clean = profileName.trim();
-    if (!clean) return;
-    if (onUpdateProfile) {
-      onUpdateProfile({ ...profile, name: clean });
     }
   };
 
@@ -1135,11 +3510,10 @@ function SettingsSheet({
   };
 
   const tabs = [
-    { id: 'workspace', label: 'Workspace & Currencies', icon: Sliders },
-    { id: 'profile', label: 'Profile Photo', icon: Camera },
+    { id: 'workspace', label: 'Workspaces & Currencies', icon: Sliders },
     { id: 'trash', label: `Trash (${validTrashEntries.length})`, icon: Trash2 },
     { id: 'general', label: 'General & Limits', icon: Settings },
-    { id: 'guide', label: '📖 Guide & Disclaimer', icon: BookOpen },
+    { id: 'security', label: 'Security & Danger Zone', icon: ShieldCheck },
   ];
 
   return (
@@ -1206,10 +3580,10 @@ function SettingsSheet({
               >
                 <FolderPlus size={13} /> {showAddWorkspace ? 'Cancel' : '+ New Workspace'}
               </button>
-            }>Workspaces & Profiles</SectionLabel>
+            }>Workspaces & Portfolios</SectionLabel>
             
             <p style={{ fontSize: 12, color: C.muted, marginTop: -4, marginBottom: 12, lineHeight: 1.45 }}>
-              Each workspace maintains its own enabled currencies and customized setup.
+              Each workspace maintains its own enabled currencies and customized portfolio view.
             </p>
 
             {/* Create New Workspace Form */}
@@ -1304,9 +3678,14 @@ function SettingsSheet({
             <Divider />
 
             {/* CURRENCY ON/OFF TOGGLE MANAGER */}
-            <SectionLabel>Workspace Currency Manager (Home & System)</SectionLabel>
-            <p style={{ fontSize: 12, color: C.muted, marginTop: -4, marginBottom: 14, lineHeight: 1.45 }}>
-              Turn currencies ON or OFF for <strong>{profile?.name || 'this workspace'}</strong>. Disabled currencies will be completely hidden from the home dashboard, entry sheets, currency converter, and net worth calculations.
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+              <SectionLabel>Workspace Currency Manager</SectionLabel>
+              <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: `${C.navy}12`, color: C.navy }}>
+                {enabledCurrencies.length} / {CURRENCIES.length} Enabled (Auto-Saved)
+              </span>
+            </div>
+            <p style={{ fontSize: 12, color: C.muted, marginTop: 0, marginBottom: 14, lineHeight: 1.45 }}>
+              Turn currencies ON or OFF for <strong>{profile?.name || 'this workspace'}</strong>. Disabled currencies will be completely hidden from your home dashboard, entry sheets, currency converter, and net worth calculations.
             </p>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 9, marginBottom: 20 }}>
@@ -1360,125 +3739,7 @@ function SettingsSheet({
         )}
 
         {/* ============================================================ */}
-        {/* TAB 2: PROFILE PHOTO & AVATAR MANAGEMENT                     */}
-        {/* ============================================================ */}
-        {activeTab === 'profile' && (
-          <div>
-            <SectionLabel>Profile Picture & Identity</SectionLabel>
-            <p style={{ fontSize: 12, color: C.muted, marginTop: -4, marginBottom: 16 }}>
-              Upload your personal photo or company logo to display on the top bar and profile menus.
-            </p>
-
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '16px 0 24px', background: C.ice, borderRadius: 18, border: `1px solid ${C.line}`, marginBottom: 20 }}>
-              <div style={{
-                position: 'relative', width: 96, height: 96, borderRadius: '50%',
-                overflow: 'hidden', background: `linear-gradient(135deg, ${C.navy}, ${C.navySoft})`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: '#fff', fontSize: 32, fontWeight: 800,
-                border: `3px solid ${C.silver}`, boxShadow: '0 8px 24px rgba(20,17,13,0.15)',
-                marginBottom: 14,
-              }}>
-                {profile?.avatar ? (
-                  <img src={profile.avatar} alt="Profile Avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                ) : (
-                  <span>{(profile?.name || 'Vault').charAt(0).toUpperCase()}</span>
-                )}
-              </div>
-
-              {/* Hidden file input */}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleAvatarUpload}
-                style={{ display: 'none' }}
-              />
-
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px',
-                    borderRadius: 12, border: 'none', background: C.navy, color: '#fff',
-                    fontSize: 13, fontWeight: 700, cursor: 'pointer', boxShadow: '0 2px 8px rgba(20,17,13,0.12)',
-                  }}
-                >
-                  <Camera size={15} /> Upload Photo
-                </button>
-
-                {profile?.avatar && (
-                  <button
-                    type="button"
-                    onClick={() => setAdjustingImageSrc(profile.avatar)}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px',
-                      borderRadius: 12, border: `1px solid ${C.line}`, background: C.surface, color: C.navySoft,
-                      fontSize: 13, fontWeight: 700, cursor: 'pointer',
-                    }}
-                  >
-                    <Crop size={14} /> Adjust / Zoom
-                  </button>
-                )}
-
-                {profile?.avatar && (
-                  <button
-                    type="button"
-                    onClick={handleRemoveAvatar}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px',
-                      borderRadius: 12, border: '1px solid #B23A3433', background: C.surface, color: '#B23A34',
-                      fontSize: 13, fontWeight: 700, cursor: 'pointer',
-                    }}
-                  >
-                    <Trash2 size={14} /> Remove Photo
-                  </button>
-                )}
-              </div>
-
-              {/* Photo Format & Dimension Limits Information */}
-              <div style={{
-                marginTop: 14, width: '92%', background: C.surface, borderRadius: 12,
-                padding: '10px 14px', border: `1px solid ${C.line}`, fontSize: 11.5,
-                color: C.muted, display: 'flex', flexDirection: 'column', gap: 4,
-              }}>
-                <div style={{ fontWeight: 800, color: C.heading, display: 'flex', alignItems: 'center', gap: 5 }}>
-                  <ShieldCheck size={13} color={C.navy} /> Photo Guidelines & File Support
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
-                  <span>• <strong>Formats:</strong> JPG, PNG, WEBP, HEIC</span>
-                  <span>• <strong>Max Size:</strong> 10 MB</span>
-                  <span>• <strong>Dimensions:</strong> Any (Portrait, Landscape, Square)</span>
-                </div>
-                <span style={{ fontSize: 10.5, color: C.steel, marginTop: 2 }}>
-                  Normal camera photos & selfies automatically fit without cutting off. Use <strong>"Fit Full Photo"</strong> or zoom to adjust.
-                </span>
-              </div>
-            </div>
-
-            {/* Rename Workspace / Profile */}
-            <SectionLabel>Workspace Name</SectionLabel>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-              <input
-                type="text"
-                value={profileName}
-                onChange={(e) => setProfileName(e.target.value)}
-                placeholder="e.g. My Personal Vault"
-                style={{ flex: 1, border: `1px solid ${C.line}`, borderRadius: 12, padding: '11px 14px', fontSize: 13.5, background: C.surface, color: C.navySoft, outline: 'none' }}
-              />
-              <button
-                type="button"
-                onClick={handleSaveProfileName}
-                style={{ padding: '11px 18px', borderRadius: 12, border: 'none', background: C.navy, color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-              >
-                Update
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ============================================================ */}
-        {/* TAB 3: TRASH SPACE & REDO HISTORY (LAST 3 DAYS)              */}
+        {/* TAB 2: TRASH SPACE & REDO HISTORY (LAST 3 DAYS)              */}
         {/* ============================================================ */}
         {activeTab === 'trash' && (
           <div>
@@ -1588,7 +3849,7 @@ function SettingsSheet({
         )}
 
         {/* ============================================================ */}
-        {/* TAB 4: GENERAL, LIMITS, RATES, SECURITY                      */}
+        {/* TAB 3: GENERAL & LIMITS                                      */}
         {/* ============================================================ */}
         {activeTab === 'general' && (
           <div>
@@ -1668,8 +3929,14 @@ function SettingsSheet({
               </div>
             ))}
             <style>{`@keyframes vlfSpin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
+          </div>
+        )}
 
-            <div style={{ height: 6 }} />
+        {/* ============================================================ */}
+        {/* TAB 4: SECURITY & DANGER ZONE                                */}
+        {/* ============================================================ */}
+        {activeTab === 'security' && (
+          <div>
             <SectionLabel>Change password</SectionLabel>
             <input type="password" placeholder="New password" value={newPw} onChange={(e) => setNewPw(e.target.value)}
               style={{ width: '100%', border: `1px solid ${C.line}`, borderRadius: 10, padding: '10px 12px', fontSize: 13, outline: 'none', marginBottom: 8, background: C.surface, color: C.navySoft, boxSizing: 'border-box' }} />
@@ -1684,52 +3951,8 @@ function SettingsSheet({
             </button>
 
             <div style={{ height: 16 }} />
-            <SectionLabel>Backup & Restore</SectionLabel>
-            <p style={{ fontSize: 12, color: C.muted, marginTop: -4, marginBottom: 10 }}>
-              Import existing sheet backups or re-run the initial onboarding configuration.
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
-              <button
-                type="button"
-                onClick={() => {
-                  onClose();
-                  if (requestPassword && onOpenImport) {
-                    requestPassword(() => onOpenImport());
-                  } else if (onOpenImport) {
-                    onOpenImport();
-                  }
-                }}
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                  padding: '12px 14px', borderRadius: 12, border: `1.5px dashed ${C.steel}`,
-                  background: `${C.steel}10`, color: C.navySoft, fontSize: 13, fontWeight: 700,
-                  cursor: 'pointer',
-                }}
-              >
-                <UploadCloud size={16} color={C.steel} /> Import Sheet (.xlsx / .csv)
-              </button>
-
-              {onRerunOnboarding && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onRerunOnboarding();
-                  }}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                    padding: '11px 14px', borderRadius: 12, border: `1px solid ${C.line}`,
-                    background: C.surface, color: C.muted, fontSize: 12.5, fontWeight: 600,
-                    cursor: 'pointer',
-                  }}
-                >
-                  <Sparkles size={14} color={C.steel} /> Re-run Welcome Setup Wizard
-                </button>
-              )}
-            </div>
-
-            <SectionLabel>Delete data</SectionLabel>
-            <p style={{ fontSize: 12, color: C.muted, marginTop: -4, marginBottom: 12 }}>Clear a specific month, or wipe everything. This cannot be undone.</p>
+            <SectionLabel>Clear data</SectionLabel>
+            <p style={{ fontSize: 12, color: C.muted, marginTop: -4, marginBottom: 12 }}>Clear a specific month, or wipe entries. This cannot be undone.</p>
             {months.length === 0 && <div style={{ fontSize: 12.5, color: C.muted, marginBottom: 12 }}>No entries yet.</div>}
             {months.map((m) => (
               <div key={m} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', border: `1px solid ${C.line}`, borderRadius: 10, marginBottom: 8 }}>
@@ -1741,21 +3964,61 @@ function SettingsSheet({
             ))}
             {months.length > 0 && (
               <button onClick={onClearAll} style={{
-                width: '100%', marginTop: 4, padding: '13px', borderRadius: 12, border: '1px solid #B23A34',
-                background: '#B23A3412', color: '#B23A34', fontSize: 13.5, fontWeight: 700, cursor: 'pointer',
+                width: '100%', marginTop: 4, padding: '12px', borderRadius: 12, border: '1px solid #B23A34',
+                background: '#B23A3412', color: '#B23A34', fontSize: 13, fontWeight: 700, cursor: 'pointer',
               }}>
-                Clear all data
+                Clear all entries
               </button>
             )}
-          </div>
-        )}
 
-        {/* ============================================================ */}
-        {/* TAB 5: COMPREHENSIVE GUIDE & DISCLAIMER                      */}
-        {/* ============================================================ */}
-        {activeTab === 'guide' && (
-          <div style={{ marginTop: 6 }}>
-            <DisclaimerGuide colors={C} compact={true} />
+            <div style={{ height: 16 }} />
+            <SectionLabel>Backup & Restore</SectionLabel>
+            <p style={{ fontSize: 12, color: C.muted, marginTop: -4, marginBottom: 10 }}>
+              Import external spreadsheets or previously exported Excel files into your Vaultify database.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                if (onOpenImport) onOpenImport();
+              }}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '12px', borderRadius: 12,
+                border: `1.5px solid ${C.navy}`, background: `${C.navy}0D`, color: C.navy, fontSize: 13, fontWeight: 700, cursor: 'pointer',
+              }}
+            >
+              <Upload size={15} /> Import Sheet (.xlsx, .csv)
+            </button>
+
+            <div style={{ height: 20 }} />
+            {/* PERMANENT ACCOUNT DELETION CARD */}
+            <div style={{
+              border: '1.5px solid #B23A3444', background: '#B23A3408',
+              borderRadius: 16, padding: '16px 14px', marginTop: 10,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <AlertTriangle size={18} color="#B23A34" />
+                <span style={{ fontSize: 14, fontWeight: 800, color: '#B23A34' }}>
+                  Danger Zone: Delete Account
+                </span>
+              </div>
+              <p style={{ fontSize: 12, color: C.muted, lineHeight: 1.45, margin: '0 0 12px' }}>
+                Permanently delete your user account, workspaces, all financial entries, currency configurations, and settings. Requires entering your password twice for strict verification.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onOpenDeleteAccount) onOpenDeleteAccount();
+                }}
+                style={{
+                  width: '100%', padding: '12px', borderRadius: 12, border: 'none',
+                  background: '#B23A34', color: '#fff', fontSize: 13, fontWeight: 800,
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+                  boxShadow: '0 3px 10px rgba(178,58,52,0.25)',
+                }}
+              >
+                <Trash2 size={14} /> Delete Account Permanently
+              </button>
+            </div>
           </div>
         )}
 
@@ -1768,7 +4031,12 @@ function SettingsSheet({
             if (k !== '_period' && v !== '' && v != null && !isNaN(Number(v))) cleanLimits[k] = Number(v);
           });
           cleanLimits._period = budgetPeriod;
-          onSave({ ...settings, budgetLimits: cleanLimits, budgetPeriod });
+          if (profile && onUpdateProfile) {
+            onUpdateProfile({ ...profile, enabledCurrencies });
+          }
+          if (onSave) {
+            onSave({ ...settings, budgetLimits: cleanLimits, budgetPeriod }, enabledCurrencies);
+          }
         }} style={{ width: '100%', padding: '15px', borderRadius: 14, border: 'none', background: C.navy, color: '#fff', fontSize: 15, fontWeight: 700, marginBottom: 10, cursor: 'pointer', boxShadow: '0 4px 14px rgba(20,17,13,0.15)' }}>
           Save settings
         </button>
@@ -1779,18 +4047,6 @@ function SettingsSheet({
         }}>
           <LogOut size={14} /> Sign out
         </button>
-
-        {/* Interactive Photo Crop / Adjust Modal */}
-        <AvatarAdjustModal
-          open={!!adjustingImageSrc}
-          imageSrc={adjustingImageSrc}
-          onClose={() => setAdjustingImageSrc(null)}
-          onSave={(adjustedBase64) => {
-            if (onUpdateProfile) {
-              onUpdateProfile({ ...profile, avatar: adjustedBase64 });
-            }
-          }}
-        />
       </div>
     </div>
   );
@@ -4332,23 +6588,36 @@ function ReportScreen({ entries, reminders = [], requestPassword, onOpenImport }
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
         <button onClick={() => requestPassword(exportMonth)} style={{ display: 'flex', alignItems: 'center', gap: 10, background: C.navy, color: '#fff', border: 'none', borderRadius: 14, padding: '13px 16px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
           <FileSpreadsheet size={17} /> Export {monthLabel(currentKey)} + Reminders (Sheet 2)
         </button>
         <button onClick={() => requestPassword(exportAll)} style={{ display: 'flex', alignItems: 'center', gap: 10, background: C.surface, color: C.navy, border: `1.5px solid ${C.navy}`, borderRadius: 14, padding: '13px 16px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
           <Download size={17} /> Export Full History + Reminders (Sheet 2)
         </button>
+      </div>
+
+      <SectionLabel>Import & Restore</SectionLabel>
+      <div style={{
+        background: C.ice, border: `1.5px solid ${C.line}`, borderRadius: 16, padding: '16px 16px',
+        marginBottom: 16, fontSize: 12.5, color: C.navySoft, lineHeight: 1.5,
+      }}>
+        <div style={{ fontWeight: 800, color: C.heading, fontSize: 14, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 7 }}>
+          <Upload size={17} color={C.navy} />
+          <span>Upload & Restore Data Sheet</span>
+        </div>
+        <p style={{ margin: '0 0 14px', color: C.muted, fontSize: 12 }}>
+          Upload your downloaded Excel report or CSV file to import all financial transactions and reminders directly into Vaultify with password verification.
+        </p>
         <button
-          type="button"
-          onClick={() => requestPassword(() => onOpenImport && onOpenImport())}
+          onClick={onOpenImport}
           style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-            background: `${C.steel}10`, color: C.navySoft, border: `1.5px dashed ${C.steel}`,
-            borderRadius: 14, padding: '13px 16px', fontSize: 14, fontWeight: 700, cursor: 'pointer',
+            width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            background: C.navy, color: '#fff', border: 'none', borderRadius: 12, padding: '12px 16px',
+            fontSize: 13.5, fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 12px rgba(20,17,13,0.15)',
           }}
         >
-          <UploadCloud size={17} color={C.steel} /> Import Sheet (.xlsx / .csv)
+          <Upload size={16} /> Import Data Sheet (.xlsx, .csv)
         </button>
       </div>
     </div>
@@ -6979,6 +9248,7 @@ function ProfileMenu({
   profile,
   profiles = [],
   trashCount = 0,
+  onOpenProfile,
   onOpenSettings,
   onSwitchProfile,
   onSignOut,
@@ -6999,31 +9269,57 @@ function ProfileMenu({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [open]);
 
+  const [isHovered, setIsHovered] = useState(false);
+  const hoverTimeoutRef = useRef(null);
   const initials = (profile?.name || 'Vault').charAt(0).toUpperCase();
 
+  const handleMouseEnter = () => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    hoverTimeoutRef.current = setTimeout(() => {
+      setIsHovered(true);
+    }, 120);
+  };
+
+  const handleMouseLeave = () => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    setIsHovered(false);
+  };
+
   return (
-    <div ref={menuRef} style={{ position: 'relative' }}>
+    <div
+      ref={menuRef}
+      style={{ position: 'relative' }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setIsHovered(false);
+          setOpen((v) => !v);
+        }}
         className="vlf-hover"
+        aria-label={profile?.name || 'Profile'}
         style={{
+          position: 'relative',
           display: 'flex',
           alignItems: 'center',
-          gap: 8,
+          justifyContent: 'center',
           background: C.surface,
-          border: `1px solid ${C.line}`,
-          borderRadius: 999,
-          padding: '4px 10px 4px 5px',
+          border: `1.5px solid ${open ? C.navy : C.line}`,
+          borderRadius: '50%',
+          width: 36,
+          height: 36,
+          padding: 0,
           cursor: 'pointer',
-          boxShadow: '0 1px 3px rgba(20,17,13,0.06)',
+          boxShadow: open ? '0 0 0 3px rgba(20,17,13,0.1)' : '0 1px 3px rgba(20,17,13,0.06)',
           transition: 'all .15s ease',
         }}
       >
         {/* Profile Avatar circle */}
         <div style={{
-          width: 28,
-          height: 28,
+          width: 30,
+          height: 30,
           borderRadius: '50%',
           overflow: 'hidden',
           background: `linear-gradient(135deg, ${C.navy}, ${C.navySoft})`,
@@ -7031,9 +9327,8 @@ function ProfileMenu({
           alignItems: 'center',
           justifyContent: 'center',
           color: '#fff',
-          fontSize: 12,
+          fontSize: 12.5,
           fontWeight: 800,
-          border: `1.5px solid ${C.silver}`,
           flexShrink: 0,
         }}>
           {profile?.avatar ? (
@@ -7043,34 +9338,64 @@ function ProfileMenu({
           )}
         </div>
 
-        {/* Workspace Name & Arrow */}
-        <span style={{
-          fontSize: 12,
-          fontWeight: 700,
-          color: C.heading,
-          maxWidth: 95,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}>
-          {profile?.name || 'Personal'}
-        </span>
-
         {trashCount > 0 && (
           <span style={{
+            position: 'absolute',
+            top: -3,
+            right: -3,
             fontSize: 9,
             fontWeight: 800,
             padding: '1px 5px',
             borderRadius: 6,
             background: '#B23A34',
             color: '#fff',
+            border: `1.5px solid ${C.surface}`,
           }}>
             {trashCount}
           </span>
         )}
-
-        <ChevronDown size={13} color={C.muted} />
       </button>
+
+      {/* Smooth Hover Tooltip (showing name below the avatar with smooth fade and subtle slide) */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 'calc(100% + 8px)',
+          left: '50%',
+          transform: isHovered && !open
+            ? 'translateX(-50%) translateY(0px)'
+            : 'translateX(-50%) translateY(-4px)',
+          opacity: isHovered && !open ? 1 : 0,
+          visibility: isHovered && !open ? 'visible' : 'hidden',
+          transition: 'opacity 0.22s ease, transform 0.22s ease, visibility 0.22s ease',
+          background: C.navy,
+          color: '#fff',
+          padding: '5px 11px',
+          borderRadius: 8,
+          fontSize: 11.5,
+          fontWeight: 700,
+          whiteSpace: 'nowrap',
+          pointerEvents: 'none',
+          zIndex: 70,
+          boxShadow: '0 6px 16px rgba(0,0,0,0.22)',
+        }}
+      >
+        {profile?.name || 'Personal Vault'}
+        {/* Tooltip top arrow */}
+        <div
+          style={{
+            position: 'absolute',
+            top: -4,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            width: 0,
+            height: 0,
+            borderLeft: '4px solid transparent',
+            borderRight: '4px solid transparent',
+            borderBottom: `4px solid ${C.navy}`,
+          }}
+        />
+      </div>
 
       {/* Dropdown Menu */}
       {open && (
@@ -7089,12 +9414,35 @@ function ProfileMenu({
             fontFamily: SANS,
           }}
         >
-          {/* Header with profile info */}
-          <div style={{ padding: '8px 10px 10px', borderBottom: `1px solid ${C.line}`, marginBottom: 6 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+          {/* Header with profile info — Clickable directly to open Profile */}
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              if (onOpenProfile) onOpenProfile();
+            }}
+            className="vlf-hover"
+            style={{
+              width: '100%',
+              padding: '10px 10px',
+              border: `1.5px solid ${C.navy}22`,
+              borderRadius: 12,
+              background: `${C.navy}08`,
+              marginBottom: 6,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 9,
+              textAlign: 'left',
+              transition: 'all .15s ease',
+            }}
+            title="Click to view and edit profile"
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0, flex: 1 }}>
               <div style={{
-                width: 36,
-                height: 36,
+                width: 38,
+                height: 38,
                 borderRadius: '50%',
                 overflow: 'hidden',
                 background: `linear-gradient(135deg, ${C.navy}, ${C.navySoft})`,
@@ -7117,16 +9465,46 @@ function ProfileMenu({
                 <div style={{ fontSize: 13, fontWeight: 800, color: C.heading, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {profile?.name || 'Personal Vault'}
                 </div>
-                <div style={{ fontSize: 10, color: C.muted, fontWeight: 600 }}>
-                  {(profile?.enabledCurrencies || CURRENCIES).length} Currencies Enabled
+                <div style={{ fontSize: 10.5, color: C.navy, fontWeight: 700 }}>
+                  Tap to edit profile →
                 </div>
               </div>
             </div>
-          </div>
+            <ChevronRight size={15} color={C.navy} />
+          </button>
+
+          {/* Settings Option Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              if (onOpenSettings) onOpenSettings('workspace');
+            }}
+            className="vlf-hover"
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 9,
+              padding: '9px 10px',
+              borderRadius: 10,
+              border: 'none',
+              background: 'transparent',
+              color: C.heading,
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: 'pointer',
+              textAlign: 'left',
+              marginBottom: 4,
+            }}
+          >
+            <Settings size={16} color={C.steel} />
+            <span>Settings</span>
+          </button>
 
           {/* Switch Workspaces Section if multiple */}
           {profiles && profiles.length > 1 && (
-            <div style={{ marginBottom: 6, padding: '2px 0', borderBottom: `1px solid ${C.line}` }}>
+            <div style={{ marginBottom: 6, padding: '4px 0', borderTop: `1px solid ${C.line}`, borderBottom: `1px solid ${C.line}` }}>
               <div style={{ fontSize: 10, fontWeight: 800, color: C.muted, textTransform: 'uppercase', padding: '4px 10px', letterSpacing: '0.05em' }}>
                 Switch Workspace
               </div>
@@ -7164,59 +9542,7 @@ function ProfileMenu({
             </div>
           )}
 
-          {/* Quick Action Links */}
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              if (onOpenSettings) onOpenSettings('workspace');
-            }}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '8px 10px',
-              borderRadius: 8,
-              border: 'none',
-              background: 'transparent',
-              color: C.heading,
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: 'pointer',
-              textAlign: 'left',
-            }}
-          >
-            <Sliders size={14} color={C.steel} />
-            <span>Currency & Workspace Setup</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              if (onOpenSettings) onOpenSettings('profile');
-            }}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '8px 10px',
-              borderRadius: 8,
-              border: 'none',
-              background: 'transparent',
-              color: C.heading,
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: 'pointer',
-              textAlign: 'left',
-            }}
-          >
-            <Camera size={14} color={C.steel} />
-            <span>Profile Photo & Name</span>
-          </button>
-
+          {/* Trash & Redo Quick Link */}
           <button
             type="button"
             onClick={() => {
@@ -7250,34 +9576,9 @@ function ProfileMenu({
             )}
           </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              if (onOpenSettings) onOpenSettings('general');
-            }}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '8px 10px',
-              borderRadius: 8,
-              border: 'none',
-              background: 'transparent',
-              color: C.heading,
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: 'pointer',
-              textAlign: 'left',
-            }}
-          >
-            <Settings size={14} color={C.muted} />
-            <span>General & Limits</span>
-          </button>
-
           <div style={{ height: 1, background: C.line, margin: '5px 0' }} />
 
+          {/* Sign Out */}
           <button
             type="button"
             onClick={() => {
@@ -7316,6 +9617,7 @@ function ProfileMenu({
 function TopBar({
   screen,
   setScreen,
+  onOpenProfile,
   onOpenSettings,
   onSignOut,
   onAddEntry,
@@ -7362,6 +9664,7 @@ function TopBar({
             profile={profile}
             profiles={profiles}
             trashCount={trashCount}
+            onOpenProfile={onOpenProfile}
             onOpenSettings={onOpenSettings}
             onSwitchProfile={onSwitchProfile}
             onSignOut={onSignOut}
@@ -7373,6 +9676,9 @@ function TopBar({
 }
 
 export default function App() {
+  const [splashActive, setSplashActive] = useState(true);
+  const [onboardingActive, setOnboardingActive] = useState(false);
+  const [onboardingName, setOnboardingName] = useState('');
   const [session, setSession] = useState(undefined);
   const [entries, setEntries] = useState([]);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
@@ -7380,6 +9686,9 @@ export default function App() {
   const [activeProfileId, setActiveProfileId] = useState('default');
   const [trashEntries, setTrashEntries] = useState([]);
   const [settingsTab, setSettingsTab] = useState('workspace');
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [reminders, setReminders] = useState([]);
   const [reminderSheetOpen, setReminderSheetOpen] = useState(false);
   const [editingReminder, setEditingReminder] = useState(null);
@@ -7399,12 +9708,6 @@ export default function App() {
   const [ratesLoading, setRatesLoading] = useState(false);
   const [pwGate, setPwGate] = useState(null);
   const [limitWarning, setLimitWarning] = useState(null);
-
-  // New onboarding, import & splash animation states
-  const [splashDone, setSplashDone] = useState(false);
-  const [importModalOpen, setImportModalOpen] = useState(false);
-  const [showOnboarding, setShowOnboarding] = useState(false);
-  const [justSignedUpName, setJustSignedUpName] = useState('');
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -7535,14 +9838,26 @@ export default function App() {
         console.error('Error loading exchanges:', err);
       }
 
-      setDataLoaded(true);
+      // Check if user has completed mandatory onboarding
+      const isAlreadyOnboarded =
+        settingsRow?.budget_limits?.onboarding_completed === true ||
+        localStorage.getItem(`vlf_onboarded_${uidVal}`) === '1';
 
-      // Check if user has completed initial onboarding setup
-      const onboardKey = `vaultify_onboarded_${uidVal}`;
-      const hasOnboarded = localStorage.getItem(onboardKey);
-      if (!hasOnboarded) {
-        setShowOnboarding(true);
+      if (!isAlreadyOnboarded) {
+        setOnboardingActive(true);
+        const nameFromMeta =
+          localStorage.getItem(`vlf_pending_onboarding_${uidVal}`) ||
+          localStorage.getItem('vlf_pending_onboarding_name') ||
+          session?.user?.user_metadata?.full_name ||
+          '';
+        if (nameFromMeta) {
+          setOnboardingName(nameFromMeta);
+        }
+      } else {
+        setOnboardingActive(false);
       }
+
+      setDataLoaded(true);
 
       const isStale = !current.ratesFetchedAt || Date.now() - new Date(current.ratesFetchedAt).getTime() > 6 * 60 * 60 * 1000;
       if (isStale) {
@@ -7594,14 +9909,21 @@ export default function App() {
         const currentLimits = settings.budgetLimits || {};
         await supabase.from('settings').upsert({
           user_id: uidVal,
-          budget_limits: { ...currentLimits, profiles: nextProfiles, active_profile_id: actId },
+          budget_limits: {
+            ...currentLimits,
+            profiles: nextProfiles,
+            active_profile_id: actId,
+            trash: trashEntries,
+            reminders: reminders,
+            exchanges: exchanges,
+          },
           updated_at: new Date().toISOString(),
         });
       } catch (err) {
         console.error('Error saving profiles to Supabase:', err);
       }
     }
-  }, [session, activeProfileId, settings]);
+  }, [session, activeProfileId, settings, trashEntries, reminders, exchanges]);
 
   const persistTrash = useCallback(async (nextTrash) => {
     setTrashEntries(nextTrash);
@@ -7616,14 +9938,14 @@ export default function App() {
         const currentLimits = settings.budgetLimits || {};
         await supabase.from('settings').upsert({
           user_id: uidVal,
-          budget_limits: { ...currentLimits, trash: nextTrash },
+          budget_limits: { ...currentLimits, trash: nextTrash, profiles, active_profile_id: activeProfileId },
           updated_at: new Date().toISOString(),
         });
       } catch (err) {
         console.error('Error saving trash to Supabase:', err);
       }
     }
-  }, [session, settings]);
+  }, [session, settings, profiles, activeProfileId]);
 
   const handleUpdateProfile = (updatedProfile) => {
     const next = profiles.map((p) => (p.id === updatedProfile.id ? updatedProfile : p));
@@ -7661,18 +9983,44 @@ export default function App() {
     }
   };
 
-  const persistSettings = useCallback(async (next) => {
+  const persistSettings = useCallback(async (next, updatedCurrencies) => {
     setSettings(next);
-    if (!session) return;
-    const limitsToPersist = { ...(next.budgetLimits || {}) };
+    if (!session?.user?.id) return;
+    const uidVal = session.user.id;
+
+    let currentProfiles = profiles;
+    if (updatedCurrencies && activeProfile) {
+      currentProfiles = profiles.map((p) => (p.id === activeProfile.id ? { ...p, enabledCurrencies: updatedCurrencies } : p));
+      setProfiles(currentProfiles);
+      try {
+        localStorage.setItem(`vaultify_profiles_${uidVal}`, JSON.stringify(currentProfiles));
+      } catch (e) {}
+    }
+
+    const limitsToPersist = {
+      ...(settings.budgetLimits || {}),
+      ...(next.budgetLimits || {}),
+      profiles: currentProfiles,
+      active_profile_id: activeProfileId,
+      trash: trashEntries,
+      reminders: reminders,
+      exchanges: exchanges,
+    };
     if (next.budgetPeriod) limitsToPersist._period = next.budgetPeriod;
+
     await supabase.from('settings').upsert({
-      user_id: session.user.id, budget_limits: limitsToPersist, rates: next.rates,
-      rates_fetched_at: next.ratesFetchedAt, display_currency: next.displayCurrency, last_currency: next.lastCurrency,
-      theme: next.theme || 'light', prev_rates: next.prevRates, prev_rates_date: next.prevRatesDate,
+      user_id: uidVal,
+      budget_limits: limitsToPersist,
+      rates: next.rates,
+      rates_fetched_at: next.ratesFetchedAt,
+      display_currency: next.displayCurrency,
+      last_currency: next.lastCurrency,
+      theme: next.theme || 'light',
+      prev_rates: next.prevRates,
+      prev_rates_date: next.prevRatesDate,
       updated_at: new Date().toISOString(),
     });
-  }, [session]);
+  }, [session, settings, profiles, activeProfile, activeProfileId, trashEntries, reminders, exchanges]);
 
   const persistReminders = useCallback((nextList) => {
     setReminders(nextList);
@@ -7983,110 +10331,11 @@ export default function App() {
   const theme = settings.theme || 'light';
   const C = theme === 'dark' ? DARK_COLORS : LIGHT_COLORS;
 
-  if (session === undefined) {
-    return (
-      <>
-        {!splashDone && <SplashScreen onComplete={() => setSplashDone(true)} />}
-        <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: LIGHT_COLORS.ice, fontFamily: SERIF, color: LIGHT_COLORS.navy, fontSize: 20 }}>Vaultify</div>
-      </>
-    );
-  }
-  if (!session) {
-    return (
-      <>
-        {!splashDone && <SplashScreen onComplete={() => setSplashDone(true)} />}
-        <AuthScreen
-          onSignedUp={(name) => {
-            setJustSignedUpName(name);
-            setShowOnboarding(true);
-          }}
-        />
-      </>
-    );
-  }
-  if (!dataLoaded) {
-    return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.ice, fontFamily: SERIF, color: C.heading, fontSize: 20 }}>Loading your vault…</div>;
-  }
-
   const handleThemeChange = (nextTheme) => {
     persistSettings({ ...settings, theme: nextTheme });
   };
 
   const requestPassword = (action) => setPwGate(() => action);
-
-  const handleImportSheet = async ({ entries: importedEntries = [], reminders: importedReminders = [], mode = 'merge' }) => {
-    if (!session) return;
-    const uidVal = session.user.id;
-    setSaving(true);
-    try {
-      if (mode === 'replace') {
-        // Delete existing entries
-        await supabase.from('entries').delete().eq('user_id', uidVal);
-      }
-
-      // Convert imported entries to database rows
-      const dbRows = importedEntries.map((e) => {
-        const row = entryToDb(e);
-        row.user_id = uidVal;
-        row.rate_at_entry = e.currency !== 'PKR' ? (settings.rates[e.currency] ?? null) : null;
-        return row;
-      });
-
-      // Insert in chunks of 50 for database stability
-      const chunkSize = 50;
-      const allSaved = [];
-      for (let i = 0; i < dbRows.length; i += chunkSize) {
-        const chunk = dbRows.slice(i, i + chunkSize);
-        const { data, error } = await supabase.from('entries').insert(chunk).select();
-        if (!error && data) {
-          allSaved.push(...data.map(dbToEntry));
-        }
-      }
-
-      if (mode === 'replace') {
-        setEntries(allSaved);
-      } else {
-        setEntries((prev) => [...allSaved, ...prev]);
-      }
-
-      // Import reminders if present
-      if (importedReminders && importedReminders.length > 0) {
-        const updatedReminders = mode === 'replace'
-          ? importedReminders
-          : [...importedReminders, ...reminders];
-        persistReminders(updatedReminders);
-      }
-
-      setShowStamp(true);
-      setTimeout(() => setShowStamp(false), 1200);
-      setImportModalOpen(false);
-    } catch (err) {
-      console.error('Import error:', err);
-      alert('Failed to import sheet: ' + (err.message || 'Unknown error'));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleOnboardingFinish = async ({ vaultName, theme: newTheme, currencies: newCurrencies }) => {
-    if (!session) return;
-    const uidVal = session.user.id;
-    localStorage.setItem(`vaultify_onboarded_${uidVal}`, 'true');
-    setShowOnboarding(false);
-
-    // Update active profile name & enabled currencies
-    const updatedProfile = {
-      ...activeProfile,
-      name: vaultName || activeProfile.name,
-      enabledCurrencies: newCurrencies || activeProfile.enabledCurrencies,
-    };
-    handleUpdateProfile(updatedProfile);
-
-    // Update theme if changed
-    if (newTheme && newTheme !== theme) {
-      handleThemeChange(newTheme);
-    }
-  };
 
   const handleClearMonth = async (key) => {
     const ids = entries.filter((e) => monthKey(e.date) === key).map((e) => e.id);
@@ -8100,8 +10349,194 @@ export default function App() {
     setEntries([]);
   };
 
+  const handleImportData = useCallback(async ({ importedEntries, importedReminders, mode }) => {
+    if (!session?.user?.id) return;
+    const uidVal = session.user.id;
+    setSaving(true);
+    try {
+      let finalEntries = [];
+      if (mode === 'replace') {
+        await supabase.from('entries').delete().eq('user_id', uidVal);
+        finalEntries = importedEntries;
+      } else {
+        const existingKeys = new Set(
+          entries.map((e) => `${e.date}_${e.amount}_${e.currency}_${e.type}_${(e.note || '').trim()}`)
+        );
+        const newEntries = importedEntries.filter(
+          (e) => !existingKeys.has(`${e.date}_${e.amount}_${e.currency}_${e.type}_${(e.note || '').trim()}`)
+        );
+        finalEntries = [...newEntries, ...entries];
+      }
+
+      // Batch insert into database in chunks of 50
+      const toInsert = mode === 'replace'
+        ? importedEntries
+        : importedEntries.filter((e) => !entries.some((ex) => ex.date === e.date && ex.amount === e.amount && ex.currency === e.currency && ex.type === e.type && (ex.note || '').trim() === (e.note || '').trim()));
+
+      for (let i = 0; i < toInsert.length; i += 50) {
+        const chunk = toInsert.slice(i, i + 50);
+        const dbRows = chunk.map((e) => ({ ...entryToDb(e), user_id: uidVal }));
+        if (dbRows.length > 0) {
+          const { error } = await supabase.from('entries').insert(dbRows);
+          if (error) {
+            for (const row of dbRows) {
+              await supabase.from('entries').insert(row);
+            }
+          }
+        }
+      }
+
+      setEntries(finalEntries);
+
+      // Process reminders if present
+      if (importedReminders && importedReminders.length > 0) {
+        let finalReminders = [];
+        if (mode === 'replace') {
+          finalReminders = importedReminders;
+        } else {
+          const existingTitles = new Set(reminders.map((r) => `${r.title.toLowerCase()}_${r.dueDate || ''}`));
+          const newRem = importedReminders.filter((r) => !existingTitles.has(`${r.title.toLowerCase()}_${r.dueDate || ''}`));
+          finalReminders = [...newRem, ...reminders];
+        }
+        persistReminders(finalReminders);
+      }
+
+      setShowStamp(true);
+      setTimeout(() => setShowStamp(false), 900);
+      return {
+        success: true,
+        count: toInsert.length,
+        reminderCount: importedReminders?.length || 0,
+      };
+    } catch (err) {
+      console.error('Import execution error:', err);
+      throw err;
+    } finally {
+      setSaving(false);
+    }
+  }, [session, entries, reminders, persistReminders]);
+
+  const handlePermanentDeleteAccount = async () => {
+    if (!session?.user?.id) return;
+    const uidVal = session.user.id;
+    try {
+      // 1. Delete all entries in database
+      await supabase.from('entries').delete().eq('user_id', uidVal);
+      // 2. Delete settings in database
+      await supabase.from('settings').delete().eq('user_id', uidVal);
+      // 3. Clear all local storage related to this user
+      try {
+        const keysToRemove = [
+          `vaultify_profiles_${uidVal}`,
+          `vaultify_active_profile_${uidVal}`,
+          `vaultify_trash_${uidVal}`,
+          `vaultify_reminders_${uidVal}`,
+          `vaultify_exchanges_${uidVal}`,
+          `vlf_onboarded_${uidVal}`,
+          `vlf_pending_onboarding_${uidVal}`,
+          `vlf_onboarding_step_${uidVal}`,
+        ];
+        keysToRemove.forEach((k) => localStorage.removeItem(k));
+        localStorage.removeItem('vlf_pending_onboarding_name');
+        localStorage.removeItem('vlf_onboarding_step_temp');
+        sessionStorage.setItem('vlf_account_deleted_banner', '1');
+      } catch (e) {}
+
+      // 4. Sign out completely
+      await supabase.auth.signOut();
+      setDeleteAccountOpen(false);
+      setSettingsOpen(false);
+      setProfileOpen(false);
+    } catch (err) {
+      console.error('Failed to permanently delete account data:', err);
+      throw err;
+    }
+  };
+
+  if (session === undefined) {
+    return (
+      <>
+        {splashActive && <SplashScreen onComplete={() => setSplashActive(false)} />}
+        <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: LIGHT_COLORS.ice, fontFamily: SERIF, color: LIGHT_COLORS.navy, fontSize: 20 }}>Vaultify</div>
+      </>
+    );
+  }
+
+  if (!session) {
+    return (
+      <>
+        {splashActive && <SplashScreen onComplete={() => setSplashActive(false)} />}
+        <AuthScreen
+          onSignupSuccess={(name) => {
+            setOnboardingName(name || '');
+            setOnboardingActive(true);
+          }}
+        />
+      </>
+    );
+  }
+
+  if (!dataLoaded) {
+    return (
+      <>
+        {splashActive && <SplashScreen onComplete={() => setSplashActive(false)} />}
+        <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.ice, fontFamily: SERIF, color: C.heading, fontSize: 20 }}>Loading your vault…</div>
+      </>
+    );
+  }
+
+  if (onboardingActive) {
+    return (
+      <>
+        {splashActive && <SplashScreen onComplete={() => setSplashActive(false)} />}
+        <OnboardingWizard
+          user={session?.user}
+          initialName={onboardingName || session?.user?.user_metadata?.full_name || ''}
+          currentTheme={theme}
+          onComplete={async ({ vaultName, theme: chosenTheme, currencies, displayCurrency }) => {
+            const uidVal = session.user.id;
+            const updatedProfile = {
+              ...activeProfile,
+              name: vaultName,
+              enabledCurrencies: currencies,
+            };
+            const nextProfiles = profiles.map((p) => (p.id === activeProfile.id ? updatedProfile : p));
+            await persistProfiles(nextProfiles, activeProfile.id);
+
+            const nextSettings = {
+              ...settings,
+              theme: chosenTheme,
+              displayCurrency,
+              lastCurrency: displayCurrency,
+              budgetLimits: {
+                ...(settings.budgetLimits || {}),
+                onboarding_completed: true,
+              },
+            };
+            await persistSettings(nextSettings);
+            setActiveCurrency(displayCurrency);
+            setTotalDisplay(displayCurrency);
+
+            try {
+              localStorage.setItem(`vlf_onboarded_${uidVal}`, '1');
+              localStorage.removeItem(`vlf_pending_onboarding_${uidVal}`);
+              localStorage.removeItem('vlf_pending_onboarding_name');
+              localStorage.removeItem(`vlf_onboarding_step_${uidVal}`);
+              localStorage.removeItem('vlf_onboarding_step_temp');
+            } catch (e) {}
+
+            setOnboardingActive(false);
+            setShowStamp(true);
+            setTimeout(() => setShowStamp(false), 1400);
+          }}
+        />
+      </>
+    );
+  }
+
   return (
     <ThemeContext.Provider value={C}>
+      {splashActive && <SplashScreen onComplete={() => setSplashActive(false)} />}
       <div style={{ background: C.ice, minHeight: '100vh', fontFamily: SANS }} data-theme={theme}>
         <div className="vlf-shell">
           <TopBar
@@ -8110,6 +10545,7 @@ export default function App() {
             profile={activeProfile}
             profiles={profiles}
             trashCount={trashEntries.length}
+            onOpenProfile={() => setProfileOpen(true)}
             onOpenSettings={(tab = 'workspace') => {
               setSettingsTab(tab);
               setSettingsOpen(true);
@@ -8211,7 +10647,7 @@ export default function App() {
                 entries={entries}
                 reminders={reminders}
                 requestPassword={requestPassword}
-                onOpenImport={() => setImportModalOpen(true)}
+                onOpenImport={() => setImportOpen(true)}
               />
             )}
             {screen === 'calculator' && (
@@ -8295,7 +10731,13 @@ export default function App() {
             open={settingsOpen}
             onClose={() => setSettingsOpen(false)}
             settings={settings}
-            onSave={(next) => { persistSettings(next); setSettingsOpen(false); }}
+            onSave={(next, nextCurrencies) => {
+              if (nextCurrencies && activeProfile) {
+                handleUpdateProfile({ ...activeProfile, enabledCurrencies: nextCurrencies });
+              }
+              persistSettings(next, nextCurrencies);
+              setSettingsOpen(false);
+            }}
             onSignOut={async () => { await supabase.auth.signOut(); }}
             ratesLoading={ratesLoading}
             onRefreshRates={async () => { const updated = await refreshRates(session.user.id, settings); setSettings(updated); }}
@@ -8305,6 +10747,7 @@ export default function App() {
             entries={entries}
             onClearMonth={(key) => requestPassword(() => handleClearMonth(key))}
             onClearAll={() => requestPassword(handleClearAll)}
+            onOpenDeleteAccount={() => setDeleteAccountOpen(true)}
             profile={activeProfile}
             profiles={profiles}
             onUpdateProfile={handleUpdateProfile}
@@ -8316,9 +10759,32 @@ export default function App() {
             onDeleteTrashPermanent={handleDeleteTrashPermanent}
             onEmptyTrash={handleEmptyTrash}
             initialTab={settingsTab}
-            onOpenImport={() => setImportModalOpen(true)}
-            requestPassword={requestPassword}
-            onRerunOnboarding={() => setShowOnboarding(true)}
+            onOpenImport={() => setImportOpen(true)}
+          />
+          <ImportSheetModal
+            open={importOpen}
+            onClose={() => setImportOpen(false)}
+            userEmail={session.user.email}
+            onImport={handleImportData}
+            defaultCurrency={settings.lastCurrency || 'PKR'}
+          />
+          <ProfileSheet
+            open={profileOpen}
+            onClose={() => setProfileOpen(false)}
+            profile={activeProfile}
+            userEmail={session.user.email}
+            onUpdateProfile={handleUpdateProfile}
+            onOpenSettings={() => {
+              setProfileOpen(false);
+              setSettingsTab('workspace');
+              setSettingsOpen(true);
+            }}
+          />
+          <DeleteAccountModal
+            open={deleteAccountOpen}
+            onClose={() => setDeleteAccountOpen(false)}
+            onConfirmDelete={handlePermanentDeleteAccount}
+            userEmail={session.user.email}
           />
           <PasswordGate open={!!pwGate} onClose={() => setPwGate(null)} userEmail={session.user.email}
             onConfirm={() => { const fn = pwGate; setPwGate(null); if (fn) fn(); }} />
@@ -8338,44 +10804,6 @@ export default function App() {
             onNo={() => setLimitWarning(null)}
           />
           <SavedStamp show={showStamp} />
-
-          {/* Import Sheet Modal with Password Security */}
-          <ImportSheetModal
-            open={importModalOpen}
-            onClose={() => setImportModalOpen(false)}
-            userEmail={session?.user?.email}
-            onImport={handleImportSheet}
-            colors={C}
-          />
-
-          {/* Setup / Welcome Wizard */}
-          {showOnboarding && (
-            <OnboardingWizard
-              open={showOnboarding}
-              userName={
-                session?.user?.user_metadata?.name ||
-                session?.user?.user_metadata?.full_name ||
-                justSignedUpName ||
-                localStorage.getItem('vaultify_temp_signup_name') ||
-                session?.user?.email?.split('@')[0] ||
-                'User'
-              }
-              initialVaultName={activeProfile?.name || 'Personal Vault'}
-              initialTheme={theme}
-              initialCurrencies={activeProfile?.enabledCurrencies || CURRENCIES}
-              colors={C}
-              onFinish={handleOnboardingFinish}
-              onSkip={() => {
-                if (session?.user?.id) {
-                  localStorage.setItem(`vaultify_onboarded_${session.user.id}`, 'true');
-                }
-                setShowOnboarding(false);
-              }}
-            />
-          )}
-
-          {/* Initial Splash Animation */}
-          {!splashDone && <SplashScreen onComplete={() => setSplashDone(true)} />}
         </div>
       </div>
     </ThemeContext.Provider>
