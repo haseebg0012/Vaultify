@@ -423,7 +423,7 @@ function SplashScreen({ onComplete }) {
 /* Auth screen                                                        */
 /* ------------------------------------------------------------------ */
 
-function AuthScreen({ onSignupSuccess }) {
+function AuthScreen({ onSignupSuccess, onSignInSuccess }) {
   const C = useColors();
   const [mode, setMode] = useState('signin');
   const [name, setName] = useState('');
@@ -474,11 +474,26 @@ function AuthScreen({ onSignupSuccess }) {
     setLoading(true);
     try {
       if (mode === 'signin') {
-        const { error: err } = await supabase.auth.signInWithPassword({ email, password });
+        try {
+          sessionStorage.setItem('vlf_login_action', 'signin');
+          sessionStorage.removeItem('vlf_just_signed_up');
+        } catch (e) {}
+        const { data, error: err } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
         if (err) throw err;
+        if (data?.user?.id) {
+          try {
+            // Existing user successfully logged in via Sign In - strictly bypass onboarding
+            localStorage.setItem(`vlf_onboarded_${data.user.id}`, '1');
+            localStorage.removeItem(`vlf_pending_signup_${data.user.id}`);
+            sessionStorage.removeItem('vlf_just_signed_up');
+          } catch (e) {}
+        }
+        if (onSignInSuccess) {
+          onSignInSuccess();
+        }
       } else if (mode === 'signup') {
         const { data, error: err } = await supabase.auth.signUp({
-          email,
+          email: email.trim(),
           password,
           options: {
             data: {
@@ -490,14 +505,18 @@ function AuthScreen({ onSignupSuccess }) {
 
         const trimmedName = name.trim();
         try {
+          sessionStorage.setItem('vlf_login_action', 'signup');
+          sessionStorage.setItem('vlf_just_signed_up', '1');
           localStorage.setItem('vlf_pending_onboarding_name', trimmedName);
           if (data?.user?.id) {
             localStorage.setItem(`vlf_pending_onboarding_${data.user.id}`, trimmedName);
+            localStorage.setItem(`vlf_pending_signup_${data.user.id}`, '1');
+            localStorage.removeItem(`vlf_onboarded_${data.user.id}`);
           }
         } catch (e) {}
 
         if (onSignupSuccess) {
-          onSignupSuccess(trimmedName);
+          onSignupSuccess(trimmedName, data?.user?.id);
         }
 
         if (data?.session) {
@@ -506,7 +525,7 @@ function AuthScreen({ onSignupSuccess }) {
           setInfo('Account created! If email confirmation is enabled in your Supabase project, check your inbox before signing in.');
         }
       } else if (mode === 'forgot') {
-        const { error: err } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+        const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: window.location.origin });
         if (err) throw err;
         setInfo('Password reset link sent. Check your inbox.');
       }
@@ -782,8 +801,49 @@ function AuthScreen({ onSignupSuccess }) {
             )}
 
             {error && (
-              <div style={{ fontSize: 12.5, color: '#A82D2D', background: '#FDF2F2', border: '1px solid #F8D7DA', padding: '8px 12px', borderRadius: 8, marginBottom: 14 }}>
-                {error}
+              <div style={{
+                fontSize: 12.5,
+                color: '#A82D2D',
+                background: '#FDF2F2',
+                border: '1.5px solid #F8D7DA',
+                padding: '12px 14px',
+                borderRadius: 12,
+                marginBottom: 14,
+              }}>
+                <div style={{ fontWeight: 700, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <AlertTriangle size={15} color="#A82D2D" />
+                  <span>{mode === 'signin' ? 'Sign In Failed / Account Not Found' : 'Error'}</span>
+                </div>
+                <div style={{ fontSize: 12, lineHeight: 1.45, color: '#782020', marginBottom: mode === 'signin' ? 10 : 0 }}>
+                  {mode === 'signin' && (error.toLowerCase().includes('invalid login credentials') || error.toLowerCase().includes('user not found') || error.toLowerCase().includes('invalid email or password'))
+                    ? 'Account nahi mila ya login credentials durust nahi hain. Agar aapka account abhi tak nahi bana hua, toh baraye meharbani pehle "Create Account" par click karke naya account banayein.'
+                    : error}
+                </div>
+                {mode === 'signin' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode('signup');
+                      setError('');
+                      setInfo('');
+                    }}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '7px 12px',
+                      borderRadius: 8,
+                      border: 'none',
+                      background: C.navy,
+                      color: '#fff',
+                      fontSize: 11.5,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <UserPlus size={13} /> Create Account (Naya Account Banayein) →
+                  </button>
+                )}
               </div>
             )}
             {info && (
@@ -838,16 +898,8 @@ function AuthScreen({ onSignupSuccess }) {
 /* ------------------------------------------------------------------ */
 
 function OnboardingWizard({ user, initialName = '', onComplete, currentTheme = 'light' }) {
-  const stepStorageKey = user?.id ? `vlf_onboarding_step_${user.id}` : 'vlf_onboarding_step_temp';
-  const [step, setStep] = useState(() => {
-    try {
-      const saved = localStorage.getItem(stepStorageKey);
-      if (saved && ['1', '2', '3'].includes(saved)) {
-        return parseInt(saved, 10);
-      }
-    } catch (e) {}
-    return 1;
-  }); // 1 = Vault Name, 2 = Theme, 3 = Currencies
+  // Always start fresh at Step 1 on page refresh / initial load until completed
+  const [step, setStep] = useState(1);
   const [animStage, setAnimStage] = useState('center'); // 'center' (first 1.8s) -> 'top'
 
   // Step 1: Vault Name
@@ -881,17 +933,9 @@ function OnboardingWizard({ user, initialName = '', onComplete, currentTheme = '
 
   const changeStep = (nextStep) => {
     setStep(nextStep);
-    try {
-      localStorage.setItem(stepStorageKey, String(nextStep));
-    } catch (e) {}
   };
 
   const handleRestartSetup = () => {
-    try {
-      localStorage.removeItem(stepStorageKey);
-      localStorage.removeItem('vlf_onboarding_step_temp');
-      if (user?.id) localStorage.removeItem(`vlf_onboarding_step_${user.id}`);
-    } catch (e) {}
     setStep(1);
     setAnimStage('center');
     setVaultName(resolvedName && resolvedName !== 'My' ? `${resolvedName}'s Vault` : 'Personal Vault');
@@ -1805,7 +1849,7 @@ function PasswordGate({ open, onClose, onConfirm, userEmail }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Avatar Crop & Adjust Modal (Zoom, Pan, Rotate, Presets)           */
+/* Avatar Crop & Adjust Modal (Zoom In / Out, Fit, Pan, Rotate)      */
 /* ------------------------------------------------------------------ */
 
 function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
@@ -1814,13 +1858,36 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
   const [panX, setPanX] = useState(0);
   const [panY, setPanY] = useState(0);
   const [rotation, setRotation] = useState(0);
+  const [bgColor, setBgColor] = useState('#14110D');
   const [isDragging, setIsDragging] = useState(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const panStartRef = useRef({ x: 0, y: 0 });
 
+  const BG_PRESETS = [
+    { label: 'Dark', color: '#14110D' },
+    { label: 'White', color: '#FFFFFF' },
+    { label: 'Navy', color: '#0F2C24' },
+    { label: 'Warm', color: '#F5F2EC' },
+    { label: 'Slate', color: '#2B3545' },
+    { label: 'Charcoal', color: '#222222' },
+  ];
+
   useEffect(() => {
-    if (open) {
-      setZoom(1);
+    if (open && imageSrc) {
+      // Default to slightly scaled or fitted if wide
+      const img = new window.Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        const aspect = img.width / img.height;
+        if (aspect > 1.2 || aspect < 0.8) {
+          // If rectangular, default to comfortable zoom so it's not overly zoomed in
+          const fitVal = aspect > 1 ? +(0.9 / aspect).toFixed(2) : +(0.9 * aspect).toFixed(2);
+          setZoom(Math.max(0.4, Math.min(1, fitVal)));
+        } else {
+          setZoom(1);
+        }
+      };
+      img.src = imageSrc;
       setPanX(0);
       setPanY(0);
       setRotation(0);
@@ -1852,6 +1919,25 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
     setIsDragging(false);
   };
 
+  const handleWheel = (e) => {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 0.05 : -0.05;
+    setZoom((z) => Math.max(0.15, Math.min(3, +(z + delta).toFixed(2))));
+  };
+
+  const handleFitWhole = () => {
+    const img = new window.Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const aspect = img.width / img.height;
+      const fitZoom = aspect > 1 ? +(0.95 / aspect).toFixed(2) : +(0.95 * aspect).toFixed(2);
+      setZoom(Math.max(0.15, Math.min(1, fitZoom)));
+      setPanX(0);
+      setPanY(0);
+    };
+    img.src = imageSrc;
+  };
+
   const handleApply = () => {
     const canvas = document.createElement('canvas');
     const size = 400;
@@ -1870,6 +1956,10 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
       ctx.beginPath();
       ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
       ctx.clip();
+
+      // Background color for fitted/zoomed-out photo
+      ctx.fillStyle = bgColor || '#14110D';
+      ctx.fillRect(0, 0, size, size);
 
       // Center and rotate
       ctx.translate(size / 2, size / 2);
@@ -1909,15 +1999,16 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: C.surface, width: '100%', maxWidth: 420, borderRadius: 22,
+          background: C.surface, width: '100%', maxWidth: 440, borderRadius: 22,
           padding: '20px 22px', boxShadow: '0 20px 48px rgba(0,0,0,0.3)', fontFamily: SANS,
-          display: 'flex', flexDirection: 'column', gap: 16, border: `1px solid ${C.line}`,
+          display: 'flex', flexDirection: 'column', gap: 14, border: `1px solid ${C.line}`,
+          maxHeight: '92vh', overflowY: 'auto',
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: C.heading, fontFamily: SERIF }}>Adjust Profile Photo</h3>
-            <p style={{ margin: '2px 0 0', fontSize: 11.5, color: C.muted }}>Drag photo to pan, use slider to zoom</p>
+            <p style={{ margin: '2px 0 0', fontSize: 11.5, color: C.muted }}>Zoom in/out, shrink to fit, or drag to reposition</p>
           </div>
           <button onClick={onClose} style={{ background: C.ice, border: 'none', borderRadius: '50%', width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
             <X size={15} color={C.heading} />
@@ -1925,7 +2016,7 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
         </div>
 
         {/* Interactive Circular Viewport */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
           <div
             onMouseDown={handlePointerDown}
             onMouseMove={handlePointerMove}
@@ -1934,10 +2025,11 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
             onTouchStart={handlePointerDown}
             onTouchMove={handlePointerMove}
             onTouchEnd={handlePointerUp}
+            onWheel={handleWheel}
             style={{
               width: 200, height: 200, borderRadius: '50%', overflow: 'hidden',
               position: 'relative', border: `3px solid ${C.navy}`,
-              boxShadow: '0 8px 24px rgba(0,0,0,0.22)', background: '#111',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.22)', background: bgColor,
               cursor: isDragging ? 'grabbing' : 'grab', userSelect: 'none', touchAction: 'none',
             }}
           >
@@ -1956,40 +2048,94 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
             <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', border: '1.5px dashed rgba(255,255,255,0.45)', pointerEvents: 'none' }} />
           </div>
           <span style={{ fontSize: 11, color: C.steel, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}>
-            <Move size={12} /> Drag inside circle to adjust position
+            <Move size={12} /> Drag inside circle • Scroll to zoom
           </span>
         </div>
 
-        {/* Zoom Slider */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: C.ice, padding: '12px 14px', borderRadius: 14, border: `1px solid ${C.line}` }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700, color: C.heading }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><ZoomIn size={13} color={C.navy} /> Zoom Scale</span>
+        {/* Quick Size / Zoom Presets */}
+        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', justifyContent: 'center' }}>
+          <button
+            type="button"
+            onClick={handleFitWhole}
+            style={{
+              padding: '6px 10px', borderRadius: 8, border: `1px solid ${C.line}`,
+              background: `${C.navy}10`, color: C.navy, fontSize: 11, fontWeight: 800, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 4,
+            }}
+          >
+            🔍 Fit Whole Photo
+          </button>
+          {[0.35, 0.5, 0.75, 1.0, 1.3].map((val) => (
+            <button
+              key={val}
+              type="button"
+              onClick={() => { setZoom(val); setPanX(0); setPanY(0); }}
+              style={{
+                padding: '6px 9px', borderRadius: 8,
+                border: Math.abs(zoom - val) < 0.05 ? `1.5px solid ${C.navy}` : `1px solid ${C.line}`,
+                background: Math.abs(zoom - val) < 0.05 ? C.navy : C.ice,
+                color: Math.abs(zoom - val) < 0.05 ? '#fff' : C.navySoft,
+                fontSize: 11, fontWeight: 700, cursor: 'pointer',
+              }}
+            >
+              {Math.round(val * 100)}%
+            </button>
+          ))}
+        </div>
+
+        {/* Zoom Slider with Wide Range (15% to 300%) */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: C.ice, padding: '10px 12px', borderRadius: 14, border: `1px solid ${C.line}` }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, fontWeight: 700, color: C.heading }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><ZoomIn size={13} color={C.navy} /> Scale / Size (Zoom In & Out)</span>
             <span style={{ color: C.navy, fontWeight: 800 }}>{Math.round(zoom * 100)}%</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <button
               type="button"
-              onClick={() => setZoom((z) => Math.max(1, +(z - 0.15).toFixed(2)))}
-              style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${C.line}`, background: C.surface, color: C.navy, fontWeight: 800, cursor: 'pointer' }}
+              title="Zoom out / Make smaller"
+              onClick={() => setZoom((z) => Math.max(0.15, +(z - 0.1).toFixed(2)))}
+              style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${C.line}`, background: C.surface, color: C.navy, fontWeight: 800, cursor: 'pointer', fontSize: 14 }}
             >
-              -
+              −
             </button>
             <input
               type="range"
-              min="1"
+              min="0.15"
               max="3"
-              step="0.05"
+              step="0.02"
               value={zoom}
               onChange={(e) => setZoom(parseFloat(e.target.value))}
               style={{ flex: 1, accentColor: C.navy, cursor: 'pointer' }}
             />
             <button
               type="button"
-              onClick={() => setZoom((z) => Math.min(3, +(z + 0.15).toFixed(2)))}
-              style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${C.line}`, background: C.surface, color: C.navy, fontWeight: 800, cursor: 'pointer' }}
+              title="Zoom in / Make bigger"
+              onClick={() => setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2)))}
+              style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${C.line}`, background: C.surface, color: C.navy, fontWeight: 800, cursor: 'pointer', fontSize: 14 }}
             >
               +
             </button>
+          </div>
+        </div>
+
+        {/* Circle Background Color for fitted/small photos */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: C.ice, padding: '8px 12px', borderRadius: 12, border: `1px solid ${C.line}` }}>
+          <span style={{ fontSize: 11.5, fontWeight: 700, color: C.heading }}>Photo Frame Background:</span>
+          <div style={{ display: 'flex', gap: 5 }}>
+            {BG_PRESETS.map((p) => (
+              <button
+                key={p.color}
+                type="button"
+                onClick={() => setBgColor(p.color)}
+                title={p.label}
+                style={{
+                  width: 20, height: 20, borderRadius: '50%', background: p.color,
+                  border: bgColor === p.color ? `2px solid ${C.navy}` : '1.5px solid rgba(0,0,0,0.15)',
+                  boxShadow: bgColor === p.color ? '0 0 0 2px #fff inset' : 'none',
+                  cursor: 'pointer',
+                }}
+              />
+            ))}
           </div>
         </div>
 
@@ -1997,36 +2143,36 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
           <button
             type="button"
-            onClick={() => { setPanX(0); setPanY(35); setZoom(1.3); }}
-            style={{ padding: '7px 11px', borderRadius: 8, border: `1px solid ${C.line}`, background: C.ice, fontSize: 11.5, fontWeight: 700, color: C.navySoft, cursor: 'pointer' }}
-          >
-            👤 Focus Face
-          </button>
-          <button
-            type="button"
-            onClick={() => { setPanX(0); setPanY(0); setZoom(1); }}
-            style={{ padding: '7px 11px', borderRadius: 8, border: `1px solid ${C.line}`, background: C.ice, fontSize: 11.5, fontWeight: 700, color: C.navySoft, cursor: 'pointer' }}
+            onClick={() => { setPanX(0); setPanY(0); }}
+            style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${C.line}`, background: C.ice, fontSize: 11, fontWeight: 700, color: C.navySoft, cursor: 'pointer' }}
           >
             🎯 Center
           </button>
           <button
             type="button"
-            onClick={() => setRotation((r) => (r + 90) % 360)}
-            style={{ padding: '7px 11px', borderRadius: 8, border: `1px solid ${C.line}`, background: C.ice, fontSize: 11.5, fontWeight: 700, color: C.navySoft, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+            onClick={() => { setPanX(0); setPanY(25); setZoom((z) => Math.max(z, 1.1)); }}
+            style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${C.line}`, background: C.ice, fontSize: 11, fontWeight: 700, color: C.navySoft, cursor: 'pointer' }}
           >
-            <RotateCw size={12} /> Rotate 90°
+            👤 Focus Face
+          </button>
+          <button
+            type="button"
+            onClick={() => setRotation((r) => (r + 90) % 360)}
+            style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${C.line}`, background: C.ice, fontSize: 11, fontWeight: 700, color: C.navySoft, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+          >
+            <RotateCw size={11} /> Rotate 90°
           </button>
           <button
             type="button"
             onClick={() => { setPanX(0); setPanY(0); setZoom(1); setRotation(0); }}
-            style={{ padding: '7px 11px', borderRadius: 8, border: `1px solid ${C.line}`, background: C.ice, fontSize: 11.5, fontWeight: 700, color: C.muted, cursor: 'pointer' }}
+            style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${C.line}`, background: C.ice, fontSize: 11, fontWeight: 700, color: C.muted, cursor: 'pointer' }}
           >
             Reset
           </button>
         </div>
 
         {/* Action Buttons */}
-        <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+        <div style={{ display: 'flex', gap: 10, marginTop: 2 }}>
           <button
             type="button"
             onClick={onClose}
@@ -11522,12 +11668,22 @@ export default function App() {
         console.error('Error loading exchanges:', err);
       }
 
-      // Check if user has completed mandatory onboarding
-      const isAlreadyOnboarded =
+      // Check if user should see onboarding wizard:
+      // - Startup wizard is ONLY for new signups who haven't completed setup.
+      // - Regular sign-in with existing account goes straight to dashboard.
+      // - If refreshed during onboarding before finishing, it stays in onboarding and restarts from step 1.
+      const isNewSignupPending =
+        sessionStorage.getItem('vlf_just_signed_up') === '1' ||
+        localStorage.getItem(`vlf_pending_signup_${uidVal}`) === '1';
+
+      const isExplicitlyOnboarded =
         settingsRow?.budget_limits?.onboarding_completed === true ||
         localStorage.getItem(`vlf_onboarded_${uidVal}`) === '1';
 
-      if (!isAlreadyOnboarded) {
+      const isNormalSignIn = sessionStorage.getItem('vlf_login_action') === 'signin' && !isNewSignupPending;
+      const hasExistingData = entryRows && entryRows.length > 0;
+
+      if (isNewSignupPending || (!isExplicitlyOnboarded && !isNormalSignIn && !hasExistingData)) {
         setOnboardingActive(true);
         const nameFromMeta =
           localStorage.getItem(`vlf_pending_onboarding_${uidVal}`) ||
@@ -11539,6 +11695,10 @@ export default function App() {
         }
       } else {
         setOnboardingActive(false);
+        try {
+          localStorage.setItem(`vlf_onboarded_${uidVal}`, '1');
+          localStorage.removeItem(`vlf_pending_signup_${uidVal}`);
+        } catch (e) {}
       }
 
       setDataLoaded(true);
@@ -12209,6 +12369,7 @@ export default function App() {
           `vaultify_exchanges_${uidVal}`,
           `vlf_onboarded_${uidVal}`,
           `vlf_pending_onboarding_${uidVal}`,
+          `vlf_pending_signup_${uidVal}`,
           `vlf_onboarding_step_${uidVal}`,
         ];
         keysToRemove.forEach((k) => localStorage.removeItem(k));
@@ -12294,6 +12455,9 @@ export default function App() {
 
             try {
               localStorage.setItem(`vlf_onboarded_${uidVal}`, '1');
+              localStorage.removeItem(`vlf_pending_signup_${uidVal}`);
+              sessionStorage.removeItem('vlf_just_signed_up');
+              sessionStorage.removeItem('vlf_login_action');
               localStorage.removeItem(`vlf_pending_onboarding_${uidVal}`);
               localStorage.removeItem('vlf_pending_onboarding_name');
               localStorage.removeItem(`vlf_onboarding_step_${uidVal}`);
