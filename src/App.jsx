@@ -8,6 +8,7 @@ import {
   HelpCircle, Search, Bell, Calendar, Clock, CheckCircle2, ListTodo, Trash2,
   Camera, RotateCcw, RotateCw, ZoomIn, ZoomOut, Move, Crop, Trash, Layers, Eye, EyeOff, Image, UserPlus, Upload,
   Sliders, Undo2, Sparkles, FolderPlus, ArrowRight, Lock, Shuffle, ClipboardPaste,
+  Pencil, Info,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from './supabaseClient';
@@ -184,6 +185,54 @@ function calculateSpentInPeriod(entries, currency, period = 'week', excludeEntry
 }
 const toBase = (amount, currency, rates) => (Number(amount) || 0) * (rates[currency] || 0);
 const fromBase = (baseAmount, currency, rates) => { const r = rates[currency] || 1; return r ? baseAmount / r : 0; };
+
+const getLotValuation = (lot, rates = {}) => {
+  if (!lot) return null;
+  const units = Number(lot.remainingUnits != null ? lot.remainingUnits : (lot.toAmount || 0)) || 0;
+  const fromCurr = lot.fromCurrency || 'PKR';
+  const toCurr = lot.toCurrency || 'EUR';
+  const fromAmt = Number(lot.fromAmount) || 0;
+  const toAmt = Number(lot.toAmount) || units || 1;
+
+  // Rate of 1 fromCurrency in PKR
+  const fromRatePkr = fromCurr === 'PKR' ? 1 : (rates[fromCurr] || 1);
+  // Rate of 1 toCurrency in PKR
+  const liveRatePkr = toCurr === 'PKR' ? 1 : (rates[toCurr] || 1);
+
+  // Deal rate in terms of fromCurrency per 1 toCurrency unit (e.g. 56.45 TRY per EUR, or 324 PKR per EUR)
+  const dealRate = Number(lot.rateAtDeal) || (toAmt > 0 ? (fromAmt / toAmt) : 0);
+
+  // Cost basis in PKR for remaining units:
+  // If bought with PKR: dealRate * units
+  // If bought with other currency (e.g. TRY): dealRate * units * (fromRatePkr)
+  const costPkr = dealRate * units * fromRatePkr;
+
+  // Effective purchase rate in PKR per 1 unit of toCurrency
+  const buyRatePkr = dealRate * fromRatePkr;
+
+  // Current market value in PKR
+  const marketValPkr = units * liveRatePkr;
+
+  // Unrealized P&L in PKR
+  const unrealizedPnlPkr = marketValPkr - costPkr;
+  const unrealizedPct = costPkr > 0 ? (unrealizedPnlPkr / costPkr) * 100 : 0;
+
+  return {
+    units,
+    fromCurr,
+    toCurr,
+    fromAmt,
+    toAmt,
+    fromRatePkr,
+    liveRatePkr,
+    dealRate,
+    costPkr,
+    buyRatePkr,
+    marketValPkr,
+    unrealizedPnlPkr,
+    unrealizedPct,
+  };
+};
 
 const dbToEntry = (r) => {
   const isUntrackedMarker = r.type === 'unaccounted' ||
@@ -5713,16 +5762,9 @@ function Dashboard({
       {/* Currency Conversions & FX Tracker Widget */}
       {(() => {
         const openLots = (exchanges || []).filter((e) => e.type === 'buy' && (e.remainingUnits > 0 || (e.remainingUnits === undefined && e.status !== 'closed')));
-        const totalOpenCost = openLots.reduce((s, l) => {
-          const units = l.remainingUnits != null ? l.remainingUnits : l.toAmount;
-          const rate = l.rateAtDeal || (l.fromAmount / l.toAmount) || 1;
-          return s + (units * rate);
-        }, 0);
-        const totalOpenMarketVal = openLots.reduce((s, l) => {
-          const units = l.remainingUnits != null ? l.remainingUnits : l.toAmount;
-          const live = settings?.rates?.[l.toCurrency] || 1;
-          return s + (units * live);
-        }, 0);
+        const lotValuations = openLots.map((l) => ({ lot: l, val: getLotValuation(l, settings?.rates) }));
+        const totalOpenCost = lotValuations.reduce((s, { val }) => s + (val?.costPkr || 0), 0);
+        const totalOpenMarketVal = lotValuations.reduce((s, { val }) => s + (val?.marketValPkr || 0), 0);
         const totalUnrealizedPnl = totalOpenMarketVal - totalOpenCost;
         const totalUnrealizedPct = totalOpenCost > 0 ? (totalUnrealizedPnl / totalOpenCost) * 100 : 0;
         const closedTrades = (exchanges || []).filter((e) => e.type === 'sell');
@@ -5771,57 +5813,58 @@ function Dashboard({
                 </div>
               ) : (
                 <div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: openLots.length > 0 ? 10 : 0 }}>
-                    <div style={{ background: C.ice, padding: '8px 10px', borderRadius: 10 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                    <div style={{ background: C.ice, padding: '9px 11px', borderRadius: 10 }}>
                       <div style={{ fontSize: 9.5, color: C.muted, fontWeight: 700, textTransform: 'uppercase' }}>Holdings Value</div>
-                      <div style={{ fontFamily: MONO, fontSize: 13.5, fontWeight: 800, color: C.heading }}>
+                      <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 800, color: C.heading, marginTop: 1 }}>
                         Rs {fmtAmount(totalOpenMarketVal)}
                       </div>
-                      <div style={{ fontSize: 9.5, color: C.muted }}>Cost: Rs {fmtAmount(totalOpenCost)}</div>
+                      <div style={{ fontSize: 9.5, color: C.muted, marginTop: 2 }}>Cost Basis: Rs {fmtAmount(totalOpenCost)}</div>
                     </div>
 
                     <div style={{
                       background: totalUnrealizedPnl >= 0 ? 'rgba(30,158,100,0.08)' : 'rgba(178,58,52,0.08)',
-                      padding: '8px 10px', borderRadius: 10,
+                      padding: '9px 11px', borderRadius: 10,
+                      border: `1px solid ${totalUnrealizedPnl >= 0 ? 'rgba(30,158,100,0.2)' : 'rgba(178,58,52,0.2)'}`,
                     }}>
                       <div style={{ fontSize: 9.5, color: totalUnrealizedPnl >= 0 ? '#1E9E64' : '#B23A34', fontWeight: 700, textTransform: 'uppercase' }}>
-                        Unrealized P&L
+                        Est. Unrealized P&L
                       </div>
-                      <div style={{ fontFamily: MONO, fontSize: 13.5, fontWeight: 800, color: totalUnrealizedPnl >= 0 ? '#1E9E64' : '#B23A34' }}>
+                      <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 800, color: totalUnrealizedPnl >= 0 ? '#1E9E64' : '#B23A34', marginTop: 1 }}>
                         {totalUnrealizedPnl >= 0 ? '+' : ''}Rs {fmtAmount(totalUnrealizedPnl)} ({totalUnrealizedPnl >= 0 ? '+' : ''}{totalUnrealizedPct.toFixed(1)}%)
                       </div>
-                      <div style={{ fontSize: 9.5, color: totalRealizedPnl >= 0 ? '#1E9E64' : '#B23A34' }}>
+                      <div style={{ fontSize: 9.5, color: totalRealizedPnl >= 0 ? '#1E9E64' : '#B23A34', marginTop: 2 }}>
                         Realized: {totalRealizedPnl >= 0 ? '+' : ''}Rs {fmtAmount(totalRealizedPnl)}
                       </div>
                     </div>
                   </div>
 
                   {openLots.length > 0 && (
-                    <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2 }}>
-                      {openLots.slice(0, 3).map((lot) => {
-                        const units = lot.remainingUnits != null ? lot.remainingUnits : lot.toAmount;
-                        const buyRate = lot.rateAtDeal || (lot.fromAmount / lot.toAmount);
-                        const liveRate = settings?.rates?.[lot.toCurrency] || 1;
-                        const pnl = (liveRate - buyRate) * units;
+                    <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2, marginTop: 6 }}>
+                      {lotValuations.slice(0, 3).map(({ lot, val }) => {
+                        if (!val) return null;
+                        const isProfit = val.unrealizedPnlPkr >= 0;
                         return (
                           <div
                             key={lot.id}
                             onClick={onOpenExchange}
                             style={{
-                              flex: '1 0 140px', background: C.ice, padding: '7px 9px', borderRadius: 8,
+                              flex: '1 0 150px', background: C.ice, padding: '7px 9px', borderRadius: 8,
                               border: `1px solid ${C.line}`, cursor: 'pointer',
                             }}
                           >
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                               <span style={{ fontSize: 11, fontWeight: 800, color: C.heading }}>
-                                {fmtAmount(units)} {lot.toCurrency}
+                                {CURRENCY_META[val.toCurr]?.flag || ''} {fmtAmount(val.units)} {val.toCurr}
                               </span>
-                              <span style={{ fontSize: 9.5, fontWeight: 700, color: pnl >= 0 ? '#1E9E64' : '#B23A34' }}>
-                                {pnl >= 0 ? '+' : ''}Rs {fmtAmount(pnl)}
+                              <span style={{ fontSize: 9.5, fontWeight: 700, color: isProfit ? '#1E9E64' : '#B23A34' }}>
+                                {isProfit ? '+' : ''}Rs {fmtAmount(val.unrealizedPnlPkr)}
                               </span>
                             </div>
-                            <div style={{ fontSize: 9, color: C.muted }}>
-                              @ Rs {fmtAmount(buyRate)} ➔ Today {fmtAmount(liveRate)}
+                            <div style={{ fontSize: 9, color: C.muted, marginTop: 2 }}>
+                              {val.fromCurr === 'PKR'
+                                ? `@ Rs ${fmtAmount(val.buyRatePkr)} ➔ Today Rs ${fmtAmount(val.liveRatePkr)}`
+                                : `@ ${fmtAmount(val.dealRate)} ${val.fromCurr} (Rs ${fmtAmount(val.costPkr)}) ➔ Today Rs ${fmtAmount(val.marketValPkr)}`}
                             </div>
                           </div>
                         );
@@ -8907,7 +8950,8 @@ function ExchangeSheet({
   const activeCurrenciesList = currencies && currencies.length ? currencies : CURRENCIES;
   const [tab, setTab] = useState('convert'); // 'convert' | 'sell' | 'history'
 
-  // Convert (Buy Foreign Currency) form state
+  // Convert (Buy Foreign Currency) form state & edit mode state
+  const [editingLotId, setEditingLotId] = useState(null);
   const [buyDate, setBuyDate] = useState(todayStr());
   const [fromCurr, setFromCurr] = useState('PKR');
   const [fromAmount, setFromAmount] = useState('');
@@ -8940,13 +8984,27 @@ function ExchangeSheet({
       .sort((a, b) => (a.date < b.date ? 1 : -1));
   }, [exchanges]);
 
+  // Valuations for all active lots
+  const lotValuations = useMemo(() => {
+    return openLots.map((l) => ({ lot: l, val: getLotValuation(l, settings?.rates) }));
+  }, [openLots, settings?.rates]);
+
   // Selected lot object for Sell flow
   const activeLot = useMemo(() => {
     return openLots.find((l) => l.id === selectedLotId) || openLots[0] || null;
   }, [openLots, selectedLotId]);
 
+  const activeLotVal = useMemo(() => {
+    return activeLot ? getLotValuation(activeLot, settings?.rates) : null;
+  }, [activeLot, settings?.rates]);
+
+  const activeLotBeingEdited = useMemo(() => {
+    return editingLotId ? (exchanges || []).find((l) => l.id === editingLotId) || null : null;
+  }, [editingLotId, exchanges]);
+
   useEffect(() => {
     if (!open) return;
+    setEditingLotId(null);
     setBuyDate(todayStr());
     setFromCurr('PKR');
     setFromAmount('');
@@ -9013,20 +9071,26 @@ function ExchangeSheet({
     ? (numFromAmount - (numToAmount * officialNetCrossRate))
     : 0;
 
-  // Calculations for Sell / Realize P&L
+  // Calculations for Sell / Realize P&L (in PKR and receiveCurr)
   const numSellUnits = Number(parseCleanAmount(sellUnits)) || 0;
   const numReceiveAmount = Number(parseCleanAmount(receiveAmount)) || 0;
-  const lotBuyRate = activeLot ? (activeLot.rateAtDeal || (activeLot.fromAmount / activeLot.toAmount)) : 0;
-  const costOfSoldUnits = numSellUnits * lotBuyRate;
-  const realizedPnl = numReceiveAmount > 0 ? numReceiveAmount - costOfSoldUnits : 0;
-  const realizedPnlPct = costOfSoldUnits > 0 ? (realizedPnl / costOfSoldUnits) * 100 : 0;
+  
+  // Cost basis in PKR for the sold units
+  const costBasisPerUnitPkr = activeLotVal ? activeLotVal.buyRatePkr : (activeLot ? (activeLot.rateAtDeal || (activeLot.fromAmount / activeLot.toAmount)) : 0);
+  const costOfSoldUnitsPkr = numSellUnits * costBasisPerUnitPkr;
+  
+  // Proceeds received in PKR
+  const receiveRatePkr = receiveCurr === 'PKR' ? 1 : (settings?.rates?.[receiveCurr] || 1);
+  const receiveValPkr = numReceiveAmount * receiveRatePkr;
+
+  const realizedPnl = numReceiveAmount > 0 ? (receiveValPkr - costOfSoldUnitsPkr) : 0;
+  const realizedPnlPct = costOfSoldUnitsPkr > 0 ? (realizedPnl / costOfSoldUnitsPkr) * 100 : 0;
   const exitDealRate = numSellUnits > 0 ? numReceiveAmount / numSellUnits : 0;
-  const rateGainPerUnit = exitDealRate - lotBuyRate;
+  const rateGainPerUnit = exitDealRate - (activeLotVal ? (activeLotVal.fromCurr === receiveCurr ? activeLotVal.dealRate : (activeLotVal.buyRatePkr / receiveRatePkr)) : 0);
 
   // Exit official rate for Sell tab
   const sellLotCurr = activeLot?.toCurrency || 'EUR';
   const sellLotRatePkr = sellLotCurr === 'PKR' ? 1 : (settings?.rates?.[sellLotCurr] || 1);
-  const receiveRatePkr = receiveCurr === 'PKR' ? 1 : (settings?.rates?.[receiveCurr] || 1);
   const sellOfficialCrossRate = receiveRatePkr > 0 ? (sellLotRatePkr / receiveRatePkr) : 1; // 1 sellLotCurr = X receiveCurr
   const sellOfficialNetProceeds = numSellUnits > 0 ? (numSellUnits * sellOfficialCrossRate) : 0;
   const sellSpreadPct = (sellOfficialCrossRate > 0 && exitDealRate > 0)
@@ -9035,19 +9099,9 @@ function ExchangeSheet({
 
   const canSaveSell = numSellUnits > 0 && numReceiveAmount > 0 && (activeLot || openLots.length === 0);
 
-  // Portfolio Totals
-  const totalOpenCost = openLots.reduce((s, l) => {
-    const units = l.remainingUnits != null ? l.remainingUnits : l.toAmount;
-    const rate = l.rateAtDeal || (l.fromAmount / l.toAmount) || 1;
-    return s + (units * rate);
-  }, 0);
-
-  const totalOpenMarketVal = openLots.reduce((s, l) => {
-    const units = l.remainingUnits != null ? l.remainingUnits : l.toAmount;
-    const live = settings?.rates?.[l.toCurrency] || 1;
-    return s + (units * live);
-  }, 0);
-
+  // Portfolio Totals using exact getLotValuation
+  const totalOpenCost = lotValuations.reduce((s, { val }) => s + (val?.costPkr || 0), 0);
+  const totalOpenMarketVal = lotValuations.reduce((s, { val }) => s + (val?.marketValPkr || 0), 0);
   const totalUnrealizedPnl = totalOpenMarketVal - totalOpenCost;
   const totalUnrealizedPct = totalOpenCost > 0 ? (totalUnrealizedPnl / totalOpenCost) * 100 : 0;
   const totalRealizedPnl = closedTrades.reduce((s, t) => s + (t.realizedPnlPkr || 0), 0);
@@ -9065,6 +9119,33 @@ function ExchangeSheet({
     }
   };
 
+  const handleEditLot = (lot) => {
+    setEditingLotId(lot.id);
+    setBuyDate(lot.date || todayStr());
+    setFromCurr(lot.fromCurrency || 'PKR');
+    setFromAmount(String(lot.fromAmount || ''));
+    setToCurr(lot.toCurrency || 'EUR');
+    setToAmount(String(lot.toAmount || (lot.remainingUnits || '')));
+    setHoldingSource(lot.holdingSource || 'Cash in Hand');
+    setDealerNote(lot.note || '');
+    setSyncVault(false);
+    setBuyTouched(false);
+    setTab('convert');
+  };
+
+  const handleCancelEdit = () => {
+    setEditingLotId(null);
+    setBuyDate(todayStr());
+    setFromCurr('PKR');
+    setFromAmount('');
+    setToCurr('EUR');
+    setToAmount('');
+    setHoldingSource('Cash in Hand');
+    setDealerNote('');
+    setSyncVault(true);
+    setBuyTouched(false);
+  };
+
   // Quick date helper
   const setQuickDate = (daysFromNow, target = 'buy') => {
     const d = new Date();
@@ -9079,7 +9160,7 @@ function ExchangeSheet({
     if (!canSaveBuy) return;
 
     const record = {
-      id: uid(),
+      id: editingLotId || uid(),
       type: 'buy',
       date: buyDate,
       fromCurrency: fromCurr,
@@ -9091,12 +9172,13 @@ function ExchangeSheet({
       spreadPct: Number(spreadPct.toFixed(2)),
       holdingSource,
       note: dealerNote.trim(),
-      remainingUnits: numToAmount,
+      remainingUnits: editingLotId ? (activeLotBeingEdited?.remainingUnits != null ? activeLotBeingEdited.remainingUnits : numToAmount) : numToAmount,
       status: 'open',
-      createdAt: new Date().toISOString(),
+      createdAt: activeLotBeingEdited?.createdAt || new Date().toISOString(),
     };
 
-    onSaveExchange(record, syncVault);
+    onSaveExchange(record, editingLotId ? false : syncVault, !!editingLotId);
+    setEditingLotId(null);
     onClose();
   };
 
@@ -9113,7 +9195,7 @@ function ExchangeSheet({
       fromAmount: numSellUnits,
       toCurrency: receiveCurr,
       toAmount: numReceiveAmount,
-      costBasisPerUnit: lotBuyRate,
+      costBasisPerUnit: costBasisPerUnitPkr,
       rateAtDeal: exitDealRate,
       marketRateOnDay: settings?.rates?.[activeLot?.toCurrency || 'EUR'] || 1,
       realizedPnlPkr: realizedPnl,
@@ -9203,6 +9285,36 @@ function ExchangeSheet({
         {/* TAB 1: BUY / CONVERT FOREIGN CURRENCY ------------------------ */}
         {tab === 'convert' && (
           <div>
+            {editingLotId && (
+              <div style={{
+                background: 'rgba(37,99,235,0.08)', borderRadius: 12, padding: '10px 14px',
+                border: '1px solid rgba(37,99,235,0.25)', marginBottom: 12, display: 'flex',
+                alignItems: 'center', justifyContent: 'space-between',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                  <Pencil size={15} color="#2563EB" />
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#2563EB' }}>
+                      Editing Existing Conversion Lot
+                    </div>
+                    <div style={{ fontSize: 10.5, color: C.muted }}>
+                      Modify amounts or rate for this lot
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCancelEdit}
+                  style={{
+                    padding: '4px 9px', borderRadius: 7, border: `1px solid ${C.line}`,
+                    background: C.surface, fontSize: 11, fontWeight: 700, color: C.heading, cursor: 'pointer',
+                  }}
+                >
+                  Cancel Edit
+                </button>
+              </div>
+            )}
+
             {/* TOP SECTION: YOU GIVE / PAY */}
             <div style={{
               background: C.ice, borderRadius: 14, padding: '13px 14px',
@@ -9556,7 +9668,7 @@ function ExchangeSheet({
                 fontWeight: 700, cursor: canSaveBuy ? 'pointer' : 'default',
               }}
             >
-              Save Conversion & Add to Holdings
+              {editingLotId ? 'Update Conversion Lot' : 'Save Conversion & Add to Holdings'}
             </button>
           </div>
         )}
@@ -9944,14 +10056,9 @@ function ExchangeSheet({
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
-                {openLots.map((lot) => {
-                  const units = lot.remainingUnits != null ? lot.remainingUnits : lot.toAmount;
-                  const buyRate = lot.rateAtDeal || (lot.fromAmount / lot.toAmount);
-                  const costPkr = units * buyRate;
-                  const liveRate = settings?.rates?.[lot.toCurrency] || 1;
-                  const liveValPkr = units * liveRate;
-                  const unPnl = liveValPkr - costPkr;
-                  const unPct = costPkr > 0 ? (unPnl / costPkr) * 100 : 0;
+                {lotValuations.map(({ lot, val }) => {
+                  if (!val) return null;
+                  const isProfit = val.unrealizedPnlPkr >= 0;
 
                   return (
                     <div
@@ -9961,27 +10068,44 @@ function ExchangeSheet({
                         border: `1px solid ${C.line}`, boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
                       }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                           <span style={{ fontSize: 16 }}>{CURRENCY_META[lot.toCurrency]?.flag || '🌐'}</span>
                           <span style={{ fontSize: 14, fontWeight: 800, color: C.heading }}>
-                            {fmtAmount(units)} {lot.toCurrency}
+                            {fmtAmount(val.units)} {lot.toCurrency}
                           </span>
                         </div>
                         <span style={{
-                          fontSize: 11, fontWeight: 700, padding: '2px 7px', borderRadius: 6,
-                          background: unPnl >= 0 ? 'rgba(30,158,100,0.12)' : 'rgba(178,58,52,0.12)',
-                          color: unPnl >= 0 ? '#1E9E64' : '#B23A34',
+                          fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 6,
+                          background: isProfit ? 'rgba(30,158,100,0.12)' : 'rgba(178,58,52,0.12)',
+                          color: isProfit ? '#1E9E64' : '#B23A34',
                         }}>
-                          {unPnl >= 0 ? '+' : ''}Rs {fmtAmount(unPnl)} ({unPnl >= 0 ? '+' : ''}{unPct.toFixed(1)}%)
+                          Est. P&L: {isProfit ? '+' : ''}Rs {fmtAmount(val.unrealizedPnlPkr)} ({isProfit ? '+' : ''}{val.unrealizedPct.toFixed(1)}%)
                         </span>
                       </div>
 
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, fontSize: 11, color: C.muted, marginBottom: 8 }}>
-                        <div>Cost: Rs {fmtAmount(costPkr)} (@ Rs {fmtAmount(buyRate)}/{lot.toCurrency})</div>
-                        <div style={{ textAlign: 'right' }}>Today: Rs {fmtAmount(liveRate)}/{lot.toCurrency}</div>
-                        <div>Date: {lot.date}</div>
-                        <div style={{ textAlign: 'right' }}>{lot.holdingSource}</div>
+                        <div>
+                          Cost Basis: <strong style={{ color: C.heading }}>Rs {fmtAmount(val.costPkr)}</strong>
+                          {val.fromCurr !== 'PKR' && (
+                            <span style={{ fontSize: 9.5, display: 'block', color: C.muted }}>
+                              ({fmtAmount(lot.fromAmount)} {val.fromCurr} @ {fmtAmount(val.dealRate)} {val.fromCurr}/{val.toCurr})
+                            </span>
+                          )}
+                          {val.fromCurr === 'PKR' && (
+                            <span style={{ fontSize: 9.5, display: 'block', color: C.muted }}>
+                              (@ Rs {fmtAmount(val.dealRate)}/{val.toCurr})
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          Live Value: <strong style={{ color: C.heading }}>Rs {fmtAmount(val.marketValPkr)}</strong>
+                          <span style={{ fontSize: 9.5, display: 'block', color: C.muted }}>
+                            (@ Rs {fmtAmount(val.liveRatePkr)}/{val.toCurr})
+                          </span>
+                        </div>
+                        <div style={{ marginTop: 2 }}>Date: {lot.date}</div>
+                        <div style={{ textAlign: 'right', marginTop: 2 }}>Stored in: {lot.holdingSource || 'Cash in Hand'}</div>
                       </div>
 
                       {lot.note && (
@@ -10005,7 +10129,21 @@ function ExchangeSheet({
                         </button>
                         <button
                           type="button"
+                          onClick={() => handleEditLot(lot)}
+                          title="Edit this conversion lot"
+                          className="vlf-hover"
+                          style={{
+                            padding: '7px 10px', borderRadius: 8, border: `1px solid ${C.line}`,
+                            background: C.ice, color: '#2563EB', fontSize: 11.5, fontWeight: 700,
+                            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3,
+                          }}
+                        >
+                          <Pencil size={13} /> Edit
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => onDeleteExchange(lot.id)}
+                          title="Delete this lot"
                           className="vlf-hover"
                           style={{
                             padding: '7px 10px', borderRadius: 8, border: '1px solid #7A2E2E33',
@@ -12069,8 +12207,13 @@ export default function App() {
     }
   }, [session]);
 
-  const handleSaveExchange = async (record, syncVault) => {
-    const nextList = [record, ...exchanges];
+  const handleSaveExchange = async (record, syncVault, isEdit = false) => {
+    let nextList;
+    if (isEdit) {
+      nextList = exchanges.map((e) => (e.id === record.id ? record : e));
+    } else {
+      nextList = [record, ...exchanges];
+    }
     persistExchanges(nextList);
     setShowStamp(true);
     setTimeout(() => setShowStamp(false), 900);
