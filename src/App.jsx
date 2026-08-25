@@ -7,7 +7,7 @@ import {
   ArrowRightLeft, Copy, CheckCheck, ArrowUpDown, AlertTriangle, ExternalLink,
   HelpCircle, Search, Bell, Calendar, Clock, CheckCircle2, ListTodo, Trash2,
   Camera, RotateCcw, RotateCw, ZoomIn, ZoomOut, Move, Crop, Trash, Layers, Eye, EyeOff, Image, UserPlus, Upload,
-  Sliders, Undo2, Sparkles, FolderPlus, ArrowRight, Lock, Shuffle,
+  Sliders, Undo2, Sparkles, FolderPlus, ArrowRight, Lock, Shuffle, ClipboardPaste,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from './supabaseClient';
@@ -98,6 +98,37 @@ const fmtCalcAmount = (n) => {
   return rounded.toLocaleString('en-US', {
     minimumFractionDigits: 0,
     maximumFractionDigits: 6,
+  });
+};
+
+const formatWithCommas = (val) => {
+  if (val === null || val === undefined || val === '') return '';
+  const s = String(val).replace(/,/g, '');
+  const isNegative = s.startsWith('-');
+  const clean = isNegative ? s.slice(1) : s;
+  const parts = clean.split('.');
+  const intPart = parts[0].replace(/\D/g, '');
+  const formattedInt = intPart ? Number(intPart).toLocaleString('en-US') : (parts.length > 1 ? '0' : '');
+  const res = isNegative ? `-${formattedInt}` : formattedInt;
+  if (parts.length > 1) {
+    return `${res}.${parts[1].replace(/\D/g, '')}`;
+  }
+  return res;
+};
+
+const parseCleanAmount = (val) => {
+  if (val === null || val === undefined || val === '') return '';
+  const s = String(val).replace(/,/g, '').replace(/[^0-9.-]/g, '');
+  const parts = s.split('.');
+  return parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : s;
+};
+
+const formatExpressionWithCommas = (expr) => {
+  if (!expr) return '';
+  return String(expr).replace(/\b\d+(\.\d+)?\b/g, (m) => {
+    const parts = m.split('.');
+    const intPart = Number(parts[0]).toLocaleString('en-US');
+    return parts.length > 1 ? `${intPart}.${parts[1]}` : intPart;
   });
 };
 const fmtMoney = (n, cur) => `${CURRENCY_META[cur]?.symbol || ''}${fmtAmount(n)}`;
@@ -1673,7 +1704,7 @@ function EntrySheet({ open, onClose, onSave, onDelete, settings, initial, saving
 
   if (!open) return null;
   const activeType = TYPES.find((t) => t.key === type);
-  const canSave = Number(amount) > 0 && !saving;
+  const canSave = Number(parseCleanAmount(amount)) > 0 && !saving;
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'flex-end', background: 'rgba(26,23,18,0.5)' }} onClick={onClose}>
@@ -1736,7 +1767,7 @@ function EntrySheet({ open, onClose, onSave, onDelete, settings, initial, saving
         <SectionLabel>Amount ({CURRENCY_META[currency]?.shortName || currency})</SectionLabel>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: C.ice, borderRadius: 14, padding: '11px 15px', marginBottom: 18, border: `1px solid ${C.line}` }}>
           <span style={{ fontFamily: SERIF, fontSize: 20, color: activeType.color, fontWeight: 700 }}>{CURRENCY_META[currency]?.symbol || currency}</span>
-          <input ref={amountRef} type="number" inputMode="decimal" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)}
+          <input ref={amountRef} type="text" inputMode="decimal" placeholder="0.00" value={amount ? formatWithCommas(amount) : ''} onChange={(e) => setAmount(parseCleanAmount(e.target.value))}
             style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontFamily: MONO, fontSize: 23, fontWeight: 600, color: C.heading }} />
         </div>
 
@@ -1766,7 +1797,7 @@ function EntrySheet({ open, onClose, onSave, onDelete, settings, initial, saving
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
           style={{ width: '100%', border: `1px solid ${C.line}`, borderRadius: 12, padding: '11px 14px', fontSize: 14, marginBottom: 22, outline: 'none', color: C.navySoft, background: C.surface, boxSizing: 'border-box', fontFamily: SANS }} />
 
-        <button onClick={() => onSave({ id: initial?.id, type, amount: Number(amount), currency, category, holdingSource, note, date })}
+        <button onClick={() => onSave({ id: initial?.id, type, amount: Number(parseCleanAmount(amount)), currency, category, holdingSource, note, date })}
           disabled={!canSave}
           style={{ width: '100%', padding: '15px', borderRadius: 14, border: 'none', background: canSave ? C.navy : C.silver, color: '#fff', fontSize: 15, fontWeight: 700, marginBottom: initial ? 10 : 0 }}>
           {saving ? 'Saving…' : initial ? 'Save changes' : 'Save entry'}
@@ -1860,6 +1891,7 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
   const [rotation, setRotation] = useState(0);
   const [bgColor, setBgColor] = useState('#14110D');
   const [isDragging, setIsDragging] = useState(false);
+  const [imgDims, setImgDims] = useState({ width: 200, height: 200 });
   const dragStartRef = useRef({ x: 0, y: 0 });
   const panStartRef = useRef({ x: 0, y: 0 });
 
@@ -1874,20 +1906,13 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
 
   useEffect(() => {
     if (open && imageSrc) {
-      // Default to slightly scaled or fitted if wide
       const img = new window.Image();
       img.crossOrigin = 'anonymous';
       img.onload = () => {
-        const aspect = img.width / img.height;
-        if (aspect > 1.2 || aspect < 0.8) {
-          // If rectangular, default to comfortable zoom so it's not overly zoomed in
-          const fitVal = aspect > 1 ? +(0.9 / aspect).toFixed(2) : +(0.9 * aspect).toFixed(2);
-          setZoom(Math.max(0.4, Math.min(1, fitVal)));
-        } else {
-          setZoom(1);
-        }
+        setImgDims({ width: img.width || 200, height: img.height || 200 });
       };
       img.src = imageSrc;
+      setZoom(1);
       setPanX(0);
       setPanY(0);
       setRotation(0);
@@ -1922,20 +1947,21 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
   const handleWheel = (e) => {
     e.preventDefault();
     const delta = e.deltaY < 0 ? 0.05 : -0.05;
-    setZoom((z) => Math.max(0.15, Math.min(3, +(z + delta).toFixed(2))));
+    setZoom((z) => Math.max(0.2, Math.min(3, +(z + delta).toFixed(2))));
   };
 
+  // Preview sizing: exact cover fill at zoom = 1.0
+  const coverScale = Math.max(200 / (imgDims.width || 200), 200 / (imgDims.height || 200));
+  const baseW = (imgDims.width || 200) * coverScale;
+  const baseH = (imgDims.height || 200) * coverScale;
+  const previewW = baseW * zoom;
+  const previewH = baseH * zoom;
+
   const handleFitWhole = () => {
-    const img = new window.Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      const aspect = img.width / img.height;
-      const fitZoom = aspect > 1 ? +(0.95 / aspect).toFixed(2) : +(0.95 * aspect).toFixed(2);
-      setZoom(Math.max(0.15, Math.min(1, fitZoom)));
-      setPanX(0);
-      setPanY(0);
-    };
-    img.src = imageSrc;
+    const fitScale = Math.min(200 / (imgDims.width || 200), 200 / (imgDims.height || 200));
+    setZoom(Math.max(0.2, +(fitScale / coverScale).toFixed(2)));
+    setPanX(0);
+    setPanY(0);
   };
 
   const handleApply = () => {
@@ -1965,26 +1991,21 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
       ctx.translate(size / 2, size / 2);
       ctx.rotate((rotation * Math.PI) / 180);
 
-      // Aspect ratio math
-      const imgAspect = img.width / img.height;
-      let drawW, drawH;
-      if (imgAspect > 1) {
-        drawH = size * zoom;
-        drawW = drawH * imgAspect;
-      } else {
-        drawW = size * zoom;
-        drawH = drawW / imgAspect;
-      }
+      // Cover scaling math for 400px canvas
+      const canvasCoverScale = Math.max(size / img.width, size / img.height);
+      const canvasBaseW = img.width * canvasCoverScale;
+      const canvasBaseH = img.height * canvasCoverScale;
+      const drawW = canvasBaseW * zoom;
+      const drawH = canvasBaseH * zoom;
 
-      const previewSize = 200;
-      const ratio = size / previewSize;
+      const ratio = size / 200; // 2
       const finalPanX = panX * ratio;
       const finalPanY = panY * ratio;
 
       ctx.drawImage(img, -drawW / 2 + finalPanX, -drawH / 2 + finalPanY, drawW, drawH);
       ctx.restore();
 
-      const result = canvas.toDataURL('image/jpeg', 0.92);
+      const result = canvas.toDataURL('image/jpeg', 0.94);
       onSave(result);
       onClose();
     };
@@ -2038,10 +2059,16 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
               alt="Adjustment preview"
               draggable={false}
               style={{
-                position: 'absolute', top: '50%', left: '50%',
-                transform: `translate(calc(-50% + ${panX}px), calc(-50% + ${panY}px)) scale(${zoom}) rotate(${rotation}deg)`,
-                maxWidth: 'none', maxHeight: 'none', minWidth: '100%', minHeight: '100%',
-                objectFit: 'cover', userSelect: 'none', pointerEvents: 'none',
+                width: previewW,
+                height: previewH,
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                transform: `translate(calc(-50% + ${panX}px), calc(-50% + ${panY}px)) rotate(${rotation}deg)`,
+                maxWidth: 'none',
+                maxHeight: 'none',
+                userSelect: 'none',
+                pointerEvents: 'none',
               }}
             />
             {/* Guide circle ring */}
@@ -2065,25 +2092,30 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
           >
             🔍 Fit Whole Photo
           </button>
-          {[0.35, 0.5, 0.75, 1.0, 1.3].map((val) => (
+          {[
+            { label: '100% (Fill)', val: 1.0 },
+            { label: '125%', val: 1.25 },
+            { label: '150%', val: 1.5 },
+            { label: '200%', val: 2.0 },
+          ].map((item) => (
             <button
-              key={val}
+              key={item.label}
               type="button"
-              onClick={() => { setZoom(val); setPanX(0); setPanY(0); }}
+              onClick={() => { setZoom(item.val); setPanX(0); setPanY(0); }}
               style={{
                 padding: '6px 9px', borderRadius: 8,
-                border: Math.abs(zoom - val) < 0.05 ? `1.5px solid ${C.navy}` : `1px solid ${C.line}`,
-                background: Math.abs(zoom - val) < 0.05 ? C.navy : C.ice,
-                color: Math.abs(zoom - val) < 0.05 ? '#fff' : C.navySoft,
+                border: Math.abs(zoom - item.val) < 0.05 ? `1.5px solid ${C.navy}` : `1px solid ${C.line}`,
+                background: Math.abs(zoom - item.val) < 0.05 ? C.navy : C.ice,
+                color: Math.abs(zoom - item.val) < 0.05 ? '#fff' : C.navySoft,
                 fontSize: 11, fontWeight: 700, cursor: 'pointer',
               }}
             >
-              {Math.round(val * 100)}%
+              {item.label}
             </button>
           ))}
         </div>
 
-        {/* Zoom Slider with Wide Range (15% to 300%) */}
+        {/* Zoom Slider with Wide Range (20% to 300%) */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: C.ice, padding: '10px 12px', borderRadius: 14, border: `1px solid ${C.line}` }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, fontWeight: 700, color: C.heading }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><ZoomIn size={13} color={C.navy} /> Scale / Size (Zoom In & Out)</span>
@@ -2093,14 +2125,14 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
             <button
               type="button"
               title="Zoom out / Make smaller"
-              onClick={() => setZoom((z) => Math.max(0.15, +(z - 0.1).toFixed(2)))}
+              onClick={() => setZoom((z) => Math.max(0.2, +(z - 0.1).toFixed(2)))}
               style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${C.line}`, background: C.surface, color: C.navy, fontWeight: 800, cursor: 'pointer', fontSize: 14 }}
             >
               −
             </button>
             <input
               type="range"
-              min="0.15"
+              min="0.2"
               max="3"
               step="0.02"
               value={zoom}
@@ -2150,7 +2182,7 @@ function AvatarAdjustModal({ open, imageSrc, onClose, onSave }) {
           </button>
           <button
             type="button"
-            onClick={() => { setPanX(0); setPanY(25); setZoom((z) => Math.max(z, 1.1)); }}
+            onClick={() => { setPanX(0); setPanY(25); setZoom((z) => Math.max(z, 1.15)); }}
             style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${C.line}`, background: C.ice, fontSize: 11, fontWeight: 700, color: C.navySoft, cursor: 'pointer' }}
           >
             👤 Focus Face
@@ -4817,11 +4849,11 @@ function SettingsSheet({
               <div key={c} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
                 <div style={{ width: 52, fontSize: 13, fontWeight: 700, color: C.navySoft }}>{c}</div>
                 <input
-                  type="number"
+                  type="text"
                   inputMode="decimal"
                   placeholder={`No ${budgetPeriod === 'week' ? 'weekly' : budgetPeriod === 'month' ? 'monthly' : 'total'} limit`}
-                  value={limits[c] ?? ''}
-                  onChange={(e) => setLimits((p) => ({ ...p, [c]: e.target.value }))}
+                  value={limits[c] ? formatWithCommas(limits[c]) : ''}
+                  onChange={(e) => setLimits((p) => ({ ...p, [c]: parseCleanAmount(e.target.value) }))}
                   style={{
                     flex: 1, border: `1px solid ${C.line}`, borderRadius: 10, padding: '9px 12px',
                     fontSize: 13, outline: 'none', background: C.surface, color: C.navySoft,
@@ -7687,7 +7719,7 @@ function InterWorkspaceTransferModal({
 
   // Calculate target converted amount using exchange rates
   const rates = settings?.rates || DEFAULT_RATES;
-  const numFrom = Number(fromAmount) || 0;
+  const numFrom = Number(parseCleanAmount(fromAmount)) || 0;
   const fromRateInPkr = rates[fromCurrency] || 1;
   const toRateInPkr = rates[toCurrency] || 1;
   const calculatedToAmount = toRateInPkr > 0 ? (numFrom * fromRateInPkr) / toRateInPkr : numFrom;
@@ -7977,11 +8009,11 @@ function InterWorkspaceTransferModal({
                   </select>
 
                   <input
-                    type="number"
+                    type="text"
                     inputMode="decimal"
                     placeholder="0.00"
-                    value={fromAmount}
-                    onChange={(e) => setFromAmount(e.target.value)}
+                    value={fromAmount ? formatWithCommas(fromAmount) : ''}
+                    onChange={(e) => setFromAmount(parseCleanAmount(e.target.value))}
                     style={{
                       flex: 1, border: 'none', background: 'transparent', outline: 'none',
                       fontFamily: MONO, fontSize: 22, fontWeight: 700, color: C.heading,
@@ -8946,8 +8978,8 @@ function ExchangeSheet({
   if (!open) return null;
 
   // Rate calculations for Buy / Convert
-  const numFromAmount = Number(fromAmount) || 0;
-  const numToAmount = Number(toAmount) || 0;
+  const numFromAmount = Number(parseCleanAmount(fromAmount)) || 0;
+  const numToAmount = Number(parseCleanAmount(toAmount)) || 0;
   const canSaveBuy = numFromAmount > 0 && numToAmount > 0 && fromCurr !== toCurr;
 
   // Universal official cross rate calculation for all currency pairs
@@ -8982,8 +9014,8 @@ function ExchangeSheet({
     : 0;
 
   // Calculations for Sell / Realize P&L
-  const numSellUnits = Number(sellUnits) || 0;
-  const numReceiveAmount = Number(receiveAmount) || 0;
+  const numSellUnits = Number(parseCleanAmount(sellUnits)) || 0;
+  const numReceiveAmount = Number(parseCleanAmount(receiveAmount)) || 0;
   const lotBuyRate = activeLot ? (activeLot.rateAtDeal || (activeLot.fromAmount / activeLot.toAmount)) : 0;
   const costOfSoldUnits = numSellUnits * lotBuyRate;
   const realizedPnl = numReceiveAmount > 0 ? numReceiveAmount - costOfSoldUnits : 0;
@@ -9237,11 +9269,11 @@ function ExchangeSheet({
                   padding: '10px 14px', border: `1.5px solid ${buyTouched && !numFromAmount ? '#B23A34' : C.line}`,
                 }}>
                   <input
-                    type="number"
+                    type="text"
                     inputMode="decimal"
-                    placeholder="e.g. 100000"
-                    value={fromAmount}
-                    onChange={(e) => setFromAmount(e.target.value)}
+                    placeholder="e.g. 100,000"
+                    value={fromAmount ? formatWithCommas(fromAmount) : ''}
+                    onChange={(e) => setFromAmount(parseCleanAmount(e.target.value))}
                     style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontFamily: MONO, fontSize: 16, fontWeight: 700, color: C.heading, textAlign: 'center' }}
                   />
                   <span style={{ fontSize: 15, fontWeight: 800, color: C.heading, whiteSpace: 'nowrap' }}>
@@ -9341,11 +9373,11 @@ function ExchangeSheet({
                   padding: '10px 14px', border: `1.5px solid ${buyTouched && !numToAmount ? '#B23A34' : C.line}`,
                 }}>
                   <input
-                    type="number"
+                    type="text"
                     inputMode="decimal"
                     placeholder="e.g. 300"
-                    value={toAmount}
-                    onChange={(e) => setToAmount(e.target.value)}
+                    value={toAmount ? formatWithCommas(toAmount) : ''}
+                    onChange={(e) => setToAmount(parseCleanAmount(e.target.value))}
                     style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontFamily: MONO, fontSize: 16, fontWeight: 700, color: C.heading, textAlign: 'center' }}
                   />
                   <span style={{ fontSize: 15, fontWeight: 800, color: '#2563EB', whiteSpace: 'nowrap' }}>
@@ -9652,11 +9684,11 @@ function ExchangeSheet({
                         {CURRENCY_META[activeLot?.toCurrency || 'EUR']?.symbol || ''}
                       </span>
                       <input
-                        type="number"
+                        type="text"
                         inputMode="decimal"
                         placeholder="e.g. 300"
-                        value={sellUnits}
-                        onChange={(e) => setSellUnits(e.target.value)}
+                        value={sellUnits ? formatWithCommas(sellUnits) : ''}
+                        onChange={(e) => setSellUnits(parseCleanAmount(e.target.value))}
                         style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontFamily: MONO, fontSize: 16, fontWeight: 700, color: C.heading }}
                       />
                     </div>
@@ -9693,11 +9725,11 @@ function ExchangeSheet({
                         {CURRENCY_META[receiveCurr]?.symbol || receiveCurr}
                       </span>
                       <input
-                        type="number"
+                        type="text"
                         inputMode="decimal"
-                        placeholder="e.g. 105000"
-                        value={receiveAmount}
-                        onChange={(e) => setReceiveAmount(e.target.value)}
+                        placeholder="e.g. 105,000"
+                        value={receiveAmount ? formatWithCommas(receiveAmount) : ''}
+                        onChange={(e) => setReceiveAmount(parseCleanAmount(e.target.value))}
                         style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontFamily: MONO, fontSize: 16, fontWeight: 700, color: C.heading }}
                       />
                     </div>
@@ -10407,6 +10439,8 @@ function CalculatorScreen({ settings, onSaveEntry, onOpenAddEntry, saving, rates
   const [justCalculated, setJustCalculated] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [calcCopied, setCalcCopied] = useState(false);
+  const [calcPasted, setCalcPasted] = useState(false);
 
   // Currency Converter state
   const [activeConvertCurrency, setActiveConvertCurrency] = useState(settings.lastCurrency || 'USD');
@@ -10518,11 +10552,55 @@ function CalculatorScreen({ settings, onSaveEntry, onOpenAddEntry, saving, rates
     setInput((p) => p + val);
   }, [input, result, justCalculated]);
 
-  // Keyboard support (desktop) - only for basic/currency modes
+  const handleCopyCalc = useCallback(() => {
+    const valToCopy = result !== null ? String(result) : (safeEval(input) !== null ? String(safeEval(input)) : (input || '0'));
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(valToCopy);
+      setCalcCopied(true);
+      setTimeout(() => setCalcCopied(false), 1500);
+    }
+  }, [result, input]);
+
+  const handlePasteCalc = useCallback(async (clipboardText = null) => {
+    try {
+      let text = clipboardText;
+      if (text == null && navigator?.clipboard?.readText) {
+        text = await navigator.clipboard.readText();
+      }
+      if (!text) return;
+      // Clean up text: remove commas, convert unicode operators
+      let clean = text.replace(/,/g, '').trim();
+      clean = clean.replace(/×/g, '*').replace(/÷/g, '/').replace(/−/g, '-');
+      // Keep only arithmetic characters
+      clean = clean.replace(/[^0-9+\-*/.() ]/g, '');
+      if (clean) {
+        const uiClean = clean.replace(/\*/g, '×').replace(/\//g, '÷').replace(/-/g, '−');
+        setInput(uiClean);
+        setHistoryExpr('');
+        const ev = safeEval(clean);
+        if (ev !== null) {
+          setResult(Number(ev.toFixed(6)));
+        } else {
+          setResult(null);
+        }
+        setJustCalculated(false);
+        setCalcPasted(true);
+        setTimeout(() => setCalcPasted(false), 1500);
+      }
+    } catch (e) {
+      console.warn('Paste failed', e);
+    }
+  }, []);
+
+  // Keyboard and Paste support (desktop & mobile) - only for basic/currency modes
   useEffect(() => {
     if (mode === 'convert') return;
     const KEY_MAP = { '+': '+', '-': '−', '*': '×', '/': '÷' };
     const handler = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+        handleCopyCalc();
+        return;
+      }
       if (/^[0-9]$/.test(e.key)) { press(e.key); return; }
       if (e.key === '.') { press('.'); return; }
       if (KEY_MAP[e.key]) { e.preventDefault(); press(KEY_MAP[e.key]); return; }
@@ -10530,9 +10608,22 @@ function CalculatorScreen({ settings, onSaveEntry, onOpenAddEntry, saving, rates
       if (e.key === 'Backspace') { e.preventDefault(); press('⌫'); return; }
       if (e.key === 'Escape' || e.key.toLowerCase() === 'c') { press('C'); return; }
     };
+
+    const pasteHandler = (e) => {
+      const pasted = e.clipboardData?.getData('text');
+      if (pasted) {
+        e.preventDefault();
+        handlePasteCalc(pasted);
+      }
+    };
+
     window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [press, mode]);
+    window.addEventListener('paste', pasteHandler);
+    return () => {
+      window.removeEventListener('keydown', handler);
+      window.removeEventListener('paste', pasteHandler);
+    };
+  }, [press, mode, handleCopyCalc, handlePasteCalc]);
 
   const openConfirm = () => {
     if (activeValue === 0) return;
@@ -10673,8 +10764,8 @@ function CalculatorScreen({ settings, onSaveEntry, onOpenAddEntry, saving, rates
             Put any value next to any currency to see real-time converted rates across all currencies.
           </p>
 
-          {/* Quick Preset Amount Chips */}
-          <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 6, marginBottom: 14 }}>
+          {/* Quick Preset Amount Chips & Paste/Clear Actions */}
+          <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 6, marginBottom: 14, alignItems: 'center' }}>
             {[
               { label: '100 USD', c: 'USD', val: '100' },
               { label: '1,000 PKR', c: 'PKR', val: '1000' },
@@ -10696,6 +10787,28 @@ function CalculatorScreen({ settings, onSaveEntry, onOpenAddEntry, saving, rates
               </Chip>
             ))}
             <button
+              onClick={async () => {
+                if (navigator?.clipboard?.readText) {
+                  try {
+                    const text = await navigator.clipboard.readText();
+                    const clean = parseCleanAmount(text);
+                    if (clean) setConvertInput(clean);
+                  } catch (e) {
+                    console.warn('Paste failed', e);
+                  }
+                }
+              }}
+              className="vlf-hover"
+              title="Paste amount from clipboard"
+              style={{
+                padding: '5px 10px', borderRadius: 999, fontSize: 11.5, fontWeight: 700,
+                border: `1px solid ${C.line}`, background: `${C.navy}10`, color: C.navy,
+                cursor: 'pointer', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4,
+              }}
+            >
+              <ClipboardPaste size={12} /> Paste
+            </button>
+            <button
               onClick={() => { setConvertInput(''); }}
               className="vlf-hover"
               style={{
@@ -10713,7 +10826,7 @@ function CalculatorScreen({ settings, onSaveEntry, onOpenAddEntry, saving, rates
             {activeCurrenciesList.map((c) => {
               const isBase = activeConvertCurrency === c;
               const convertedNum = isBase ? numericConvertValue : fromBase(baseConvertPkr, c, settings.rates);
-              const displayVal = isBase ? convertInput : (convertInput === '' ? '' : fmtAmount(convertedNum));
+              const displayVal = isBase ? (convertInput ? formatWithCommas(convertInput) : '') : (convertInput === '' ? '' : fmtAmount(convertedNum));
               const rawNumericVal = isBase ? numericConvertValue : Math.round(convertedNum * 100) / 100;
 
               // Unit exchange rate vs base
@@ -10779,7 +10892,7 @@ function CalculatorScreen({ settings, onSaveEntry, onOpenAddEntry, saving, rates
                           }
                         }}
                         onChange={(e) => {
-                          const sanitized = e.target.value.replace(/[^0-9.]/g, '');
+                          const sanitized = parseCleanAmount(e.target.value);
                           setActiveConvertCurrency(c);
                           setConvertInput(sanitized);
                         }}
@@ -10917,6 +11030,64 @@ function CalculatorScreen({ settings, onSaveEntry, onOpenAddEntry, saving, rates
             </>
           )}
 
+          {/* Calculator Top Utility Bar: Quick Copy / Paste & Status */}
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            marginBottom: 8, padding: '0 4px',
+          }}>
+            <div style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>
+              {calcCopied ? (
+                <span style={{ color: '#059669', display: 'flex', alignItems: 'center', gap: 4, fontWeight: 700 }}>
+                  <Check size={13} /> Copied to clipboard!
+                </span>
+              ) : calcPasted ? (
+                <span style={{ color: C.navy, display: 'flex', alignItems: 'center', gap: 4, fontWeight: 700 }}>
+                  <Check size={13} /> Pasted from clipboard!
+                </span>
+              ) : (
+                <span>Use shortcuts (Ctrl+C / Ctrl+V) or buttons</span>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button
+                type="button"
+                onClick={handleCopyCalc}
+                title="Copy current expression or result"
+                className="vlf-hover"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  padding: '4px 9px', borderRadius: 8,
+                  border: `1px solid ${calcCopied ? '#059669' : C.line}`,
+                  background: calcCopied ? 'rgba(5,150,105,0.1)' : C.surface,
+                  color: calcCopied ? '#059669' : C.muted,
+                  fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
+                }}
+              >
+                {calcCopied ? <CheckCheck size={12} /> : <Copy size={12} />}
+                {calcCopied ? 'Copied' : 'Copy'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handlePasteCalc()}
+                title="Paste numbers or formula into calculator"
+                className="vlf-hover"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  padding: '4px 9px', borderRadius: 8,
+                  border: `1px solid ${calcPasted ? C.navy : C.line}`,
+                  background: calcPasted ? `${C.navy}14` : C.surface,
+                  color: calcPasted ? C.navy : C.muted,
+                  fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
+                }}
+              >
+                <ClipboardPaste size={12} />
+                {calcPasted ? 'Pasted' : 'Paste'}
+              </button>
+            </div>
+          </div>
+
           <div style={{
             background: C.surface,
             border: `1.5px solid ${C.line}`,
@@ -10984,7 +11155,7 @@ function CalculatorScreen({ settings, onSaveEntry, onOpenAddEntry, saving, rates
 
             {/* Right: Top Expression / History, Bottom Evaluated Answer */}
             <div style={{ flex: 1, textAlign: 'right', minWidth: 0 }}>
-              {/* Top Entry / History Formula (stays intact after =) */}
+              {/* Top Entry / History Formula (formatted with commas) */}
               <div style={{
                 fontFamily: MONO,
                 fontSize: 15.5,
@@ -10997,8 +11168,8 @@ function CalculatorScreen({ settings, onSaveEntry, onOpenAddEntry, saving, rates
                 letterSpacing: '0.02em',
               }}>
                 {justCalculated && historyExpr
-                  ? historyExpr
-                  : (input || (result !== null ? fmtCalcAmount(result) : '\u00A0'))}
+                  ? formatExpressionWithCommas(historyExpr)
+                  : (input ? formatExpressionWithCommas(input) : (result !== null ? fmtCalcAmount(result) : '\u00A0'))}
               </div>
 
               {/* Bottom Result: Calculated answer after sign or equal */}
@@ -11013,7 +11184,7 @@ function CalculatorScreen({ settings, onSaveEntry, onOpenAddEntry, saving, rates
               }}>
                 {result !== null
                   ? fmtCalcAmount(result)
-                  : (input ? (safeEval(input) !== null ? fmtCalcAmount(safeEval(input)) : input) : '0')}
+                  : (input ? (safeEval(input) !== null ? fmtCalcAmount(safeEval(input)) : formatExpressionWithCommas(input)) : '0')}
               </div>
             </div>
           </div>
