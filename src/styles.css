@@ -1,21 +1,38 @@
 :root {
-  --bg: #EFF4F1;
-  --bg-elev: #131318;
+  --bg: #F8FAF9;
+  --bg-elev: #FFFFFF;
   --card: #FFFFFF;
-  --card-2: #EFF7F2;
-  --border: rgba(20,40,32,0.08);
-  --border-strong: rgba(20,40,32,0.16);
-  --text: #152420;
-  --text-muted: #7C8983;
-  --accent-1: #1F6F52;
-  --accent-2: #0F3D2C;
-  --accent-gradient: linear-gradient(135deg, #1F6F52 0%, #0F3D2C 100%);
+  --card-2: #F1F5F3;
+  --border: rgba(14,27,22,0.08);
+  --border-strong: rgba(14,27,22,0.18);
+  --text: #0A1512;
+  --text-muted: #61756D;
+  --accent-1: #0E6E47;
+  --accent-2: #09472E;
+  --accent-gradient: linear-gradient(135deg, #0E6E47 0%, #083824 100%);
   --expense: #E15B52;
   --saving: #1E9E64;
   --invest: #C2670A;
-  --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
-  --font-body: "Inter", system-ui, -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: "Montserrat", system-ui, sans-serif;
+  --font-body: "Montserrat", system-ui, -apple-system, sans-serif;
+  --font-mono: "Montserrat", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+[data-theme="dark"] {
+  --bg: #090A0D;
+  --bg-elev: #13161C;
+  --card: #13151A;
+  --card-2: #1A1D24;
+  --border: rgba(255,255,255,0.085);
+  --border-strong: rgba(255,255,255,0.18);
+  --text: #F8FAFC;
+  --text-muted: #94A3B8;
+  --accent-1: #10B981;
+  --accent-2: #059669;
+  --accent-gradient: linear-gradient(135deg, #10B981 0%, #047857 100%);
+  --expense: #F87171;
+  --saving: #34D399;
+  --invest: #FBBF24;
 }
 
 * { box-sizing: border-box; }
@@ -27,6 +44,7 @@ body {
   font-family: var(--font-body);
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior-y: none;
+  transition: background-color .25s cubic-bezier(0.16, 1, 0.3, 1), color .25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 ::-webkit-scrollbar { height: 6px; width: 6px; }

@@ -268,11 +268,11 @@ export function OnboardingWizard({
                       onClick={() => setTheme('light')}
                       style={{
                         borderRadius: 16,
-                        border: `2px solid ${theme === 'light' ? C.navy : C.line}`,
-                        background: '#FAF7EF',
+                        border: `2px solid ${theme === 'light' ? '#0E6E47' : C.line}`,
+                        background: '#F8FAF9',
                         padding: 16,
                         cursor: 'pointer',
-                        boxShadow: theme === 'light' ? '0 6px 20px rgba(20,17,13,0.12)' : 'none',
+                        boxShadow: theme === 'light' ? '0 8px 24px rgba(14,110,71,0.18)' : 'none',
                         position: 'relative',
                         transition: 'all .2s ease',
                       }}
@@ -280,19 +280,19 @@ export function OnboardingWizard({
                       {theme === 'light' && (
                         <div style={{
                           position: 'absolute', top: 10, right: 10,
-                          width: 20, height: 20, borderRadius: '50%', background: C.navy,
+                          width: 22, height: 22, borderRadius: '50%', background: '#0E6E47',
                           color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
                         }}>
-                          <Check size={12} strokeWidth={3} />
+                          <Check size={13} strokeWidth={3} />
                         </div>
                       )}
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                        <Sun size={18} color="#14110D" />
-                        <div style={{ fontWeight: 800, fontSize: 14, color: '#14110D' }}>Light Sand</div>
+                        <Sun size={18} color="#0E6E47" />
+                        <div style={{ fontWeight: 800, fontSize: 13.5, color: '#0E1B16' }}>Emerald Light</div>
                       </div>
-                      <div style={{ background: '#FFFFFF', borderRadius: 8, padding: 8, border: '1px solid rgba(20,17,13,0.08)' }}>
-                        <div style={{ height: 6, width: '60%', background: '#14110D', borderRadius: 3, marginBottom: 4 }} />
-                        <div style={{ height: 4, width: '40%', background: '#7A7265', borderRadius: 2 }} />
+                      <div style={{ background: '#FFFFFF', borderRadius: 8, padding: 8, border: '1px solid rgba(14,27,22,0.08)' }}>
+                        <div style={{ height: 6, width: '60%', background: '#0E1B16', borderRadius: 3, marginBottom: 4 }} />
+                        <div style={{ height: 4, width: '40%', background: '#61756D', borderRadius: 2 }} />
                       </div>
                     </div>
 
@@ -301,11 +301,11 @@ export function OnboardingWizard({
                       onClick={() => setTheme('dark')}
                       style={{
                         borderRadius: 16,
-                        border: `2px solid ${theme === 'dark' ? '#1F6F52' : C.line}`,
-                        background: '#121217',
+                        border: `2px solid ${theme === 'dark' ? '#10B981' : C.line}`,
+                        background: '#090A0D',
                         padding: 16,
                         cursor: 'pointer',
-                        boxShadow: theme === 'dark' ? '0 6px 20px rgba(0,0,0,0.3)' : 'none',
+                        boxShadow: theme === 'dark' ? '0 8px 24px rgba(0,0,0,0.5)' : 'none',
                         position: 'relative',
                         transition: 'all .2s ease',
                       }}
@@ -313,19 +313,19 @@ export function OnboardingWizard({
                       {theme === 'dark' && (
                         <div style={{
                           position: 'absolute', top: 10, right: 10,
-                          width: 20, height: 20, borderRadius: '50%', background: '#1F6F52',
-                          color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          width: 22, height: 22, borderRadius: '50%', background: '#10B981',
+                          color: '#090A0D', display: 'flex', alignItems: 'center', justifyContent: 'center',
                         }}>
-                          <Check size={12} strokeWidth={3} />
+                          <Check size={13} strokeWidth={3} />
                         </div>
                       )}
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                        <Moon size={18} color="#EFF4F1" />
-                        <div style={{ fontWeight: 800, fontSize: 14, color: '#EFF4F1' }}>Midnight Dark</div>
+                        <Moon size={18} color="#10B981" />
+                        <div style={{ fontWeight: 800, fontSize: 13.5, color: '#F8FAFC' }}>Onyx Dark</div>
                       </div>
-                      <div style={{ background: '#1A1A22', borderRadius: 8, padding: 8, border: '1px solid rgba(255,255,255,0.08)' }}>
-                        <div style={{ height: 6, width: '60%', background: '#EFF4F1', borderRadius: 3, marginBottom: 4 }} />
-                        <div style={{ height: 4, width: '40%', background: '#7C8983', borderRadius: 2 }} />
+                      <div style={{ background: '#13151A', borderRadius: 8, padding: 8, border: '1px solid rgba(255,255,255,0.08)' }}>
+                        <div style={{ height: 6, width: '60%', background: '#F8FAFC', borderRadius: 3, marginBottom: 4 }} />
+                        <div style={{ height: 4, width: '40%', background: '#94A3B8', borderRadius: 2 }} />
                       </div>
                     </div>
                   </div>

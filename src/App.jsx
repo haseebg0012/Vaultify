@@ -12,6 +12,8 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from './supabaseClient';
+import vaultHeroBanner from './assets/images/vault_luxury_banner_1787684000157.jpg';
+import fintechEmptyArt from './assets/images/fintech_empty_art_1787684015958.jpg';
 
 /* ------------------------------------------------------------------ */
 /* Design tokens                                                      */
@@ -58,12 +60,14 @@ const DEFAULT_SETTINGS = {
 
 /* Theme palettes ----------------------------------------------------- */
 const LIGHT_COLORS = {
-  navy: '#14110D', navySoft: '#241D14', steel: '#1F6F52', ice: '#FAF7EF',
-  surface: '#FFFFFF', silver: '#E3D3A0', line: '#E9DFC4', muted: '#8B7F68', heading: '#14110D',
+  navy: '#0E1B16', navySoft: '#182E26', steel: '#0E6E47', ice: '#F8FAF9',
+  surface: '#FFFFFF', silver: '#E2ECE7', line: 'rgba(14,27,22,0.08)', muted: '#61756D', heading: '#0A1512',
+  card2: '#F1F5F3', accentGlow: 'rgba(14,110,71,0.14)',
 };
 const DARK_COLORS = {
-  navy: '#4FBE8C', navySoft: '#2E8F67', steel: '#4FBE8C', ice: '#0A0A0C',
-  surface: '#16161A', silver: '#D6D6DD', line: 'rgba(255,255,255,0.10)', muted: '#9A9AA3', heading: '#EDEDEF',
+  navy: '#10B981', navySoft: '#34D399', steel: '#10B981', ice: '#090A0D',
+  surface: '#13151A', silver: '#1E232D', line: 'rgba(255,255,255,0.085)', muted: '#94A3B8', heading: '#F8FAFC',
+  card2: '#1A1D24', accentGlow: 'rgba(16,185,129,0.22)',
 };
 const ThemeContext = React.createContext(LIGHT_COLORS);
 const useColors = () => React.useContext(ThemeContext);
@@ -617,29 +621,57 @@ function AuthScreen({ onSignupSuccess, onSignInSuccess }) {
   };
 
   return (
-    <div style={{ minHeight: '100vh', background: `linear-gradient(180deg, ${C.navy} 0%, ${C.navySoft} 45%, ${C.ice} 45%)`, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, fontFamily: SANS }}>
-      <div style={{ width: '100%', maxWidth: 410 }}>
-        {/* Top Logo and Header */}
-        <div style={{ textAlign: 'center', marginBottom: 24, color: '#fff' }}>
+    <div style={{ minHeight: '100vh', background: `linear-gradient(180deg, ${C.navySoft} 0%, ${C.ice} 100%)`, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, fontFamily: SANS }}>
+      <div style={{ width: '100%', maxWidth: 430 }}>
+        {/* Luxury Hero Banner */}
+        <div style={{
+          position: 'relative',
+          borderRadius: 20,
+          overflow: 'hidden',
+          marginBottom: 20,
+          border: '1px solid rgba(255,255,255,0.18)',
+          boxShadow: '0 16px 36px rgba(0,0,0,0.3)',
+        }}>
+          <img
+            src={vaultHeroBanner}
+            alt="Vaultify Luxury Wealth Banner"
+            referrerPolicy="no-referrer"
+            style={{ width: '100%', height: 145, objectFit: 'cover', display: 'block' }}
+          />
           <div style={{
-            width: 58,
-            height: 58,
-            margin: '0 auto 12px',
-            borderRadius: 18,
-            background: 'linear-gradient(135deg, #1F6F52 0%, #0F3D2C 100%)',
-            border: '1px solid rgba(255,255,255,0.25)',
+            position: 'absolute',
+            inset: 0,
+            background: 'linear-gradient(to top, rgba(9,10,13,0.92) 0%, rgba(9,10,13,0.35) 60%, transparent 100%)',
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '0 10px 24px rgba(0,0,0,0.3)',
+            flexDirection: 'column',
+            justifyContent: 'flex-end',
+            padding: '16px 18px',
           }}>
-            <span style={{ fontFamily: SERIF, fontSize: 28, fontWeight: 800, color: '#FFFFFF' }}>V</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+              <div style={{
+                width: 32,
+                height: 32,
+                borderRadius: 10,
+                background: 'linear-gradient(135deg, #10B981 0%, #047857 100%)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 4px 14px rgba(16,185,129,0.4)',
+                flexShrink: 0,
+              }}>
+                <span style={{ fontFamily: SERIF, fontSize: 17, fontWeight: 800, color: '#FFFFFF' }}>V</span>
+              </div>
+              <div style={{ fontFamily: SERIF, fontSize: 22, fontWeight: 800, color: '#FFFFFF', letterSpacing: '-0.01em' }}>
+                Vaultify
+              </div>
+            </div>
+            <div style={{ fontSize: 11.5, color: '#D1E0D9', marginTop: 4, fontWeight: 500 }}>
+              Next-Generation Multi-Currency Wealth & Net Worth Tracker
+            </div>
           </div>
-          <div style={{ fontFamily: SERIF, fontSize: 27, fontWeight: 700, letterSpacing: '0.01em' }}>Vaultify</div>
-          <div style={{ fontSize: 12.5, opacity: 0.75, marginTop: 4 }}>Private, multi-currency wealth & net worth tracking</div>
         </div>
 
-        <Card style={{ padding: 24 }}>
+        <Card style={{ padding: 24, boxShadow: '0 8px 30px rgba(0,0,0,0.08)', borderRadius: 20 }}>
           {accountDeletedBanner && (
             <div style={{
               background: '#1E9E6410',
@@ -6661,7 +6693,43 @@ function HistoryScreen({
         </Card>
       )}
 
-      {filtered.length === 0 && <div style={{ textAlign: 'center', padding: '40px 0', color: C.muted, fontSize: 13 }}>No entries here yet. Tap + to log your first one.</div>}
+      {filtered.length === 0 && (
+        <div style={{
+          textAlign: 'center',
+          padding: '36px 20px',
+          background: C.surface,
+          borderRadius: 20,
+          border: `1px solid ${C.line}`,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.03)',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          margin: '16px 0',
+        }}>
+          <div style={{
+            width: 100,
+            height: 100,
+            borderRadius: 18,
+            overflow: 'hidden',
+            marginBottom: 16,
+            border: `1px solid ${C.line}`,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.08)',
+          }}>
+            <img
+              src={fintechEmptyArt}
+              alt="No Transactions"
+              referrerPolicy="no-referrer"
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            />
+          </div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: C.heading, marginBottom: 4 }}>
+            No Transactions Recorded
+          </div>
+          <div style={{ fontSize: 12.5, color: C.muted, maxWidth: 280, lineHeight: 1.5 }}>
+            No financial entries matched your filter. Tap the floating + button to log income, expense, or savings.
+          </div>
+        </div>
+      )}
       
       {/* Entries List with prominent Currency & Type clarity */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -11759,6 +11827,8 @@ function TopBar({
   profiles = [],
   unreadNotificationsCount = 0,
   onSwitchProfile,
+  theme = 'light',
+  onToggleTheme,
 }) {
   const C = useColors();
   const [scrolled, setScrolled] = useState(false);
@@ -11768,32 +11838,96 @@ function TopBar({
     onScroll();
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
+
+  const isDark = theme === 'dark';
+
   return (
     <div className={`vlf-topbar-wrap ${scrolled ? 'is-scrolled' : ''}`} style={{
-      background: scrolled ? `${C.surface}E6` : 'transparent',
-      boxShadow: scrolled ? '0 2px 10px rgba(20,17,13,0.06)' : 'none',
+      background: scrolled ? (isDark ? 'rgba(19,22,28,0.85)' : 'rgba(255,255,255,0.88)') : 'transparent',
+      boxShadow: scrolled ? (isDark ? '0 4px 20px rgba(0,0,0,0.5)' : '0 2px 14px rgba(20,17,13,0.06)') : 'none',
+      borderBottom: scrolled ? `1px solid ${C.line}` : '1px solid transparent',
     }}>
       <div className="vlf-topbar">
-        <div className="vlf-topbar-logo" style={{
-          fontFamily: SERIF, fontWeight: 700, color: C.navy, letterSpacing: '0.01em',
-          fontSize: scrolled ? 16 : 20, transition: 'font-size .2s ease', flexShrink: 0,
-        }}>
-          Vaultify
+        <div
+          className="vlf-topbar-logo"
+          onClick={() => setScreen('dashboard')}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 9,
+            fontFamily: SERIF,
+            fontWeight: 800,
+            color: C.heading,
+            letterSpacing: '-0.01em',
+            fontSize: scrolled ? 17 : 21,
+            transition: 'all .2s ease',
+            flexShrink: 0,
+            cursor: 'pointer',
+          }}
+        >
+          <div style={{
+            width: scrolled ? 28 : 34,
+            height: scrolled ? 28 : 34,
+            borderRadius: 10,
+            background: isDark
+              ? 'linear-gradient(135deg, #10B981 0%, #047857 100%)'
+              : 'linear-gradient(135deg, #0E6E47 0%, #083824 100%)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#FFFFFF',
+            fontWeight: 800,
+            fontSize: scrolled ? 15 : 18,
+            boxShadow: isDark ? '0 0 16px rgba(16,185,129,0.35)' : '0 4px 12px rgba(14,110,71,0.25)',
+            transition: 'all .2s ease',
+          }}>
+            V
+          </div>
+          <span>Vaultify</span>
         </div>
         <div className="vlf-header-nav">
           {NAV.map((n) => {
             const Icon = n.icon; const active = screen === n.key;
             return (
               <button key={n.key} onClick={() => setScreen(n.key)} className="vlf-nav-item vlf-hover" style={{
-                width: 'auto', color: active ? C.navy : C.muted,
-                background: active ? `${C.navy}12` : 'none', border: active ? `1px solid ${C.line}` : '1px solid transparent',
+                width: 'auto',
+                color: active ? (isDark ? '#10B981' : C.heading) : C.muted,
+                background: active ? (isDark ? 'rgba(16,185,129,0.12)' : 'rgba(14,110,71,0.08)') : 'none',
+                border: active ? `1px solid ${isDark ? 'rgba(16,185,129,0.3)' : C.line}` : '1px solid transparent',
+                borderRadius: 10,
+                fontWeight: active ? 700 : 600,
+                padding: '8px 14px',
               }}>
-                <Icon size={15} color={active ? C.steel : 'currentColor'} /> {n.label}
+                <Icon size={15} color={active ? (isDark ? '#10B981' : C.steel) : 'currentColor'} /> {n.label}
               </button>
             );
           })}
         </div>
-        <div className="vlf-topbar-right">
+        <div className="vlf-topbar-right" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* Quick Theme Switcher Button (Light / Dark) */}
+          <button
+            type="button"
+            onClick={onToggleTheme}
+            title={isDark ? 'Switch to White (Light) Theme' : 'Switch to Black (Dark) Theme'}
+            className="vlf-hover"
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: 12,
+              border: `1px solid ${C.line}`,
+              background: C.surface,
+              color: isDark ? '#FBBF24' : '#0E6E47',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+              transition: 'all .2s ease',
+            }}
+          >
+            {isDark ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
+
           <ProfileMenu
             profile={profile}
             profiles={profiles}
@@ -12580,6 +12714,16 @@ export default function App() {
   const theme = settings.theme || 'light';
   const C = theme === 'dark' ? DARK_COLORS : LIGHT_COLORS;
 
+  useEffect(() => {
+    try {
+      document.documentElement.setAttribute('data-theme', theme);
+      if (document.body) {
+        document.body.style.backgroundColor = C.ice;
+        document.body.setAttribute('data-theme', theme);
+      }
+    } catch (e) {}
+  }, [theme, C.ice]);
+
   const handleThemeChange = (nextTheme) => {
     persistSettings({ ...settings, theme: nextTheme });
   };
@@ -12807,6 +12951,8 @@ export default function App() {
             onSwitchProfile={handleSwitchProfile}
             onSignOut={async () => { await supabase.auth.signOut(); }}
             onAddEntry={() => { setEditingEntry(null); setSheetOpen(true); }}
+            theme={theme}
+            onToggleTheme={() => handleThemeChange(theme === 'dark' ? 'light' : 'dark')}
           />
 
           <button
